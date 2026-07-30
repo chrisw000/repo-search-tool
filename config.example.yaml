@@ -1,0 +1,106 @@
+# Brand asset discovery scanner — example configuration.
+#
+# This one file is the whole scan definition. It is validated in full before
+# any repository is acquired, so a typo costs seconds rather than the first
+# hour of a multi-hour run.
+#
+# Adding a new class of brand reference is a change to this file, never to the
+# code: see `search_groups` below.
+
+output_dir: ./brandscan-output
+
+# --- What to scan ---------------------------------------------------------
+
+# Each {host, org} pair is enumerated in full. Both hosts need their own
+# authenticated gh session; the preflight proves that before anything is cloned.
+targets:
+  - host: github.com
+    org: contoso
+    include_archived: false   # archived repos are off by default
+    include_forks: false      # forks are off by default
+  - host: github.enterprise.example
+    org: platform
+
+# Directories you already have locally. These are NEVER modified: a clean one
+# is scanned where it stands, a dirty one is skipped with the reason recorded.
+external_repositories: []
+#  - host: github.com
+#    org: contoso
+#    name: legacy-portal
+#    path: C:\work\legacy-portal
+
+# --- What to look for -----------------------------------------------------
+
+# The brand vocabulary. The six default search-groups are built from these, so
+# for a straightforward rebrand this block is the only thing you need to edit.
+brand:
+  names:
+    - Contoso
+    - Contoso Group
+  fonts:
+    - Contoso Sans
+    - ContosoSerif
+  domains:
+    - contoso.com
+    - contoso.co.uk
+  colors:
+    - "#0F62FE"
+    - "#FF6B00"
+  legal:
+    - Contoso Limited
+    - Contoso Holdings plc
+
+# Retune or extend the seeded groups here. A group named after a seeded one
+# overrides just the fields you give; any other name defines a new group, which
+# runs through exactly the same engine.
+search_groups:
+  - name: brand-names
+    severity: high
+
+#  - name: internal-tooling
+#    patterns:
+#      - "contoso-deploy(-cli)?"
+#    include: ["*.yml", "*.yaml", "*.ps1"]
+#    severity: low
+#    remediation: "Point the pipeline at the renamed deployment tool."
+
+# Seeded groups are removable like any other.
+disable_search_groups: []
+
+# --- Image matching -------------------------------------------------------
+
+# One reference image per distinct LAYOUT (horizontal, stacked, icon,
+# wordmark) — not one per colourway. Matching is done on luminance, so
+# colourways collapse onto one reference and recoloured copies nobody
+# catalogued are caught for free.
+#
+# Every reference must be labelled. An unlabelled one fails validation by name
+# rather than quietly acquiring a filename-shaped label.
+reference_images:
+  dir: ./references
+  labels:
+    logo-horizontal.png: horizontal-lockup
+    logo-stacked.png: stacked-lockup
+    icon.png: icon-only
+    wordmark.svg: wordmark
+
+# Perceptual-hash distance within which a candidate counts as the same layout.
+# Tighten toward 5 to cut noise, raise to catch more. Omit it to take the
+# documented default of 10; the value actually used is recorded in every report.
+similarity_threshold: 10
+
+# --- File scope -----------------------------------------------------------
+
+# Everything here is optional; omit the block to take the defaults. Dependency
+# directories are excluded by default.
+#
+# Build output (dist, build, out, bin, obj, wwwroot, public) is deliberately
+# NOT excluded. Deployed brand assets frequently exist only in build output,
+# and excluding it would silently miss exactly the assets that ship. The cost
+# is some duplication between source and build output, which is cheap to
+# dismiss.
+scope:
+  # exclude_dirs: [node_modules, vendor, .git]
+  # exclude_globs: ["*.zip", "*.mp4"]
+  # include_globs: []            # empty means "everything not excluded"
+  max_file_bytes: 5242880

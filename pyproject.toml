@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brandscan"
+version = "0.1.0"
+description = "Brand asset discovery scanner: finds old-brand residue across many repositories by image content and text pattern."
+requires-python = ">=3.11"
+dependencies = [
+    "Pillow>=10",
+    "PyYAML>=6",
+    "numpy>=1.26",
+    "svglib>=1.5",
+    "reportlab>=4",
+    # renderPM's raster backend. reportlab 5 dropped the bundled C renderer, so
+    # without this every SVG in the estate would be an unrenderable file.
+    "rlPyCairo>=0.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+brandscan = "brandscan.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

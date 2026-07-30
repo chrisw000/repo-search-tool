@@ -1,0 +1,51 @@
+# --- Python -------------------------------------------------------------
+# The virtualenv is rebuilt from pyproject.toml; never commit it.
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Packaging output from `python -m build` / `pip wheel`.
+build/
+dist/
+
+# Tooling caches.
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- Scan inputs and outputs ---------------------------------------------
+# Reports, managed clones, checkpoints, and run logs. These can run to
+# gigabytes across ~400 repositories and are reproducible from a re-run.
+brandscan-output/
+
+# Your live scan config: it names internal hosts and organisations, so it is
+# ignored by default. `config.example.yaml` is the committed template. Delete
+# this line if your team wants the real config versioned.
+config.yaml
+config.*.yaml
+!config.example.yaml
+
+# Reference logo images. Usually proprietary brand assets that do not belong
+# in a public repository. Remove this line if yours are safe to commit.
+references/
+
+# --- Local tooling and editor state --------------------------------------
+# Personal permission grants with machine-specific absolute paths.
+.claude/settings.local.json
+
+.idea/
+.vs/
+.vscode/
+*.swp
+
+# --- Windows -------------------------------------------------------------
+Thumbs.db
+desktop.ini
