@@ -109,6 +109,37 @@ reference_images:
 # documented default of 10; the value actually used is recorded in every report.
 similarity_threshold: 10
 
+# Which images are worth assessing at all. Omit the block to take the defaults.
+image_scope:
+  # An image below this many pixels in EITHER dimension is not matched. A 1x1
+  # tracking pixel, an 8x8 bullet and a 600x1 rule have no layout for a
+  # perceptual hash to describe, so hashing them yields noise rather than
+  # findings. 15 sits above every spacer size and below every icon size in real
+  # use, so 16x16 favicons and 24x24 toolbar icons are still assessed.
+  #
+  # Set to 0 to assess every image whatever its size. The value in force is
+  # recorded in every report, together with how many images it ruled out — an
+  # image that was ruled out is never presented as one that was examined and
+  # found clean.
+  min_dimension: 15
+
+  # Paths exempt from the minimum, matched against the repository-relative path
+  # or the bare filename, like every other glob in this file.
+  #
+  # Favicons are the one brand asset that is legitimately tiny, and they are the
+  # brand in the browser tab of every deployed site. At the default of 15 they
+  # clear the minimum unaided; the exemption is what lets you RAISE the minimum
+  # — to 32, say, after a run turns up a pile of 20x20 sprite fragments —
+  # without silently dropping every favicon in the estate in the same edit.
+  #
+  # Replace the list to exempt something else; give an empty list to exempt
+  # nothing.
+  always_examine:
+    - "favicon*"
+    - "apple-touch-icon*"
+    - "*.ico"
+    - "*.cur"
+
 # --- File scope -----------------------------------------------------------
 
 # Everything here is optional; omit the block to take the defaults. Dependency
