@@ -25,7 +25,7 @@ not the code.
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 
-# Tests — full suite is ~45s, currently 141 passing.
+# Tests — full suite is ~40s, currently 203 passing.
 .\.venv\Scripts\python.exe -m pytest -q
 
 # A single file while iterating.
@@ -59,13 +59,15 @@ src/brandscan/
   images/           trim, hashing, SVG rasterisation, matching strategy seam
   report/           per-repo markdown + JSON sidecar, permalinks, executive summary
 tests/              mirrors the above; conftest.py builds synthetic logos and git repos
-openspec/changes/   the specifications this was built from
+openspec/specs/     the current behaviour contract — six capabilities, source of truth
+openspec/changes/   in-flight changes; archive/ holds the ones already folded into specs/
 ```
 
 ## Load-bearing invariants
 
-Do not "simplify" these away. Each encodes a decision recorded in
-`openspec/changes/brand-asset-discovery-scanner/design.md`.
+Do not "simplify" these away. Each encodes a decision (the `Dn` references
+below) recorded in
+`openspec/changes/archive/2026-07-31-brand-asset-discovery-scanner/design.md`.
 
 1. **Trim before any colour-mode conversion** (`images/trim.py`, D2).
    Converting an opaque image to RGBA first gives it a full-frame alpha channel;
@@ -104,10 +106,22 @@ Do not "simplify" these away. Each encodes a decision recorded in
 
 ## Working on this
 
-- **The spec leads.** For a behaviour change, update the relevant capability
-  spec under `openspec/changes/.../specs/` first, then the code. Use
-  `/opsx:apply` to work through `tasks.md` and tick each `- [ ]` → `- [x]`
-  **as it is verified by a passing test**, not when the code is merely written.
+- **The spec leads.** `openspec/specs/` is the current contract. For a behaviour
+  change, raise a change and write its delta spec under
+  `openspec/changes/<name>/specs/` first, then the code. A delta that modifies an
+  existing requirement must carry the **whole** requirement block copied from
+  `openspec/specs/`, scenarios included — a partial MODIFIED silently drops the
+  scenarios it omits. Use `/opsx:apply` to work through `tasks.md` and tick each
+  `- [ ]` → `- [x]` **as it is verified by a passing test**, not when the code is
+  merely written.
+- **Keep the OpenSpec documentation current as work is archived.** Archiving a
+  change is what moves its behaviour into `openspec/specs/`, so nothing may be
+  archived while its deltas are unsynced. When you archive, in the same pass:
+  sync the deltas into `openspec/specs/`, run
+  `openspec validate --specs --strict`, and update this file — the test count,
+  the Outstanding section, and any path that pointed into the change directory
+  you just moved under `archive/`. Stale guidance here is worse than none: it is
+  read as current by the next session.
 - **Every requirement has a test.** The suite is organised around spec
   scenarios, not around functions. A new requirement without a test that would
   fail before it is not done.
@@ -117,11 +131,28 @@ Do not "simplify" these away. Each encodes a decision recorded in
 - **British spelling** in user-facing strings and identifiers (`colour`,
   `rasterise`, `organisation`) — matches the specs and the existing code.
 
+## Git working practice
+
+- **A new session starts a new branch.** Never commit to `main`. Branch with
+  `git checkout -b <name>` — or take a worktree when the work needs to sit
+  alongside another branch rather than replace it in the working directory.
+- **Commit as you go**, not in one lump at the end. A commit per coherent step,
+  with the tests passing at that point — so a bisect lands somewhere useful and
+  a bad step can be dropped without unpicking the good ones around it.
+- **Push the branch when the work is finished**, and open a PR from there. Do
+  not merge to `main` locally.
+
 ## Outstanding
 
-Tasks 8.1, 8.3, and 8.4 in
-`openspec/changes/brand-asset-discovery-scanner/tasks.md` are unticked and need
-the operator's real environment: assembling a validation set of 5–6
-representative repositories, tuning the similarity threshold against it, and
-confirming a per-repo `report.md` ingests cleanly as fix instructions for an AI
-coding agent. Everything verified so far used synthetic fixtures.
+Nothing. Both changes are implemented and their behaviour is now recorded in
+`openspec/specs/` — six capability specs, the source of truth from here on.
+Tasks 8.1, 8.3, and 8.4 were the last open items and were verified against the
+operator's real environment on 2026-07-31: the validation set was assembled,
+the similarity threshold was confirmed empirically at the documented default of
+10, and a per-repo `report.md` was confirmed to ingest cleanly as fix
+instructions for an AI coding agent. Everything else was verified against
+synthetic fixtures.
+
+Both changes are archived, so `openspec/changes/` holds only `archive/` and
+`openspec list` reports no active changes. The next piece of work starts with a
+new proposal.
