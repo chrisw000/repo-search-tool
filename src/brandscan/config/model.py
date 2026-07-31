@@ -19,6 +19,66 @@ from pathlib import Path
 DEFAULT_SIMILARITY_THRESHOLD = 10
 
 
+@dataclass(frozen=True)
+class ConfidenceBand:
+    """How close an image match was, in words rather than in distance alone.
+
+    `upper` is inclusive; `None` means unbounded, which the last band must be
+    so that no distance can fall off the end of the ladder.
+    """
+
+    name: str
+    lower: int
+    upper: int | None = None
+
+    def contains(self, distance: int) -> bool:
+        return distance >= self.lower and (self.upper is None or distance <= self.upper)
+
+    def reachable_at(self, threshold: int) -> bool:
+        """Whether any finding in a run at this threshold could land here."""
+        return self.lower <= threshold
+
+    @property
+    def range_text(self) -> str:
+        return f"{self.lower}+" if self.upper is None else f"{self.lower}–{self.upper}"
+
+
+# The ladder is absolute in distance, so "very high" means the same thing in
+# every run and across both hosts — bands defined as a fraction of the
+# configured threshold would silently redefine the word between two documents
+# that look identical. The boundaries sit inside the range where findings
+# actually occur: matching only reports a candidate at or below the threshold,
+# whose default is 10, so a ladder first stepping at 5 and 10 would collapse to
+# two live bands and everything below "high" would be dead.
+CONFIDENCE_BANDS: tuple[ConfidenceBand, ...] = (
+    ConfidenceBand("very high", 0, 2),
+    ConfidenceBand("high", 3, 5),
+    ConfidenceBand("medium", 6, 8),
+    ConfidenceBand("low", 9, 12),
+    ConfidenceBand("very low", 13, None),
+)
+
+
+def band_for(distance: int) -> ConfidenceBand:
+    """The band a measured distance falls in. Total over every distance."""
+    for band in CONFIDENCE_BANDS:
+        if band.contains(distance):
+            return band
+    return CONFIDENCE_BANDS[-1]
+
+
+def reachable_bands(threshold: int) -> list[ConfidenceBand]:
+    """The bands a run at this threshold could put a finding in.
+
+    A band lying wholly beyond the threshold is dropped rather than printed as
+    a permanent zero: at the default threshold "very low" can never be reached,
+    and a zero that could never have been anything else teaches the reader to
+    skip the zeros that do mean something. A band the threshold reaches into is
+    kept even when empty — `low: 0` says every match was a solid one.
+    """
+    return [band for band in CONFIDENCE_BANDS if band.reachable_at(threshold)]
+
+
 class Severity(str, Enum):
     """How much remediation work a finding implies.
 

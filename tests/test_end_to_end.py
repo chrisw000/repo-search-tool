@@ -154,8 +154,57 @@ def test_every_target_repository_has_both_report_forms(estate):
 
     assert layout.summary_file.is_file()
     assert layout.summary_json_file.is_file()
+    assert layout.summary_html_file.is_file()
     # The coverage check found nothing missing.
     assert not any("no report on disk" in error for error in outcome.run_errors)
+
+
+def test_the_html_summary_carries_the_same_run_as_the_markdown(estate):
+    config, _ = estate
+    _, layout = run(config)
+
+    markdown = layout.summary_file.read_text(encoding="utf-8")
+    html = layout.summary_html_file.read_text(encoding="utf-8")
+    payload = json.loads(layout.summary_json_file.read_text(encoding="utf-8"))
+
+    for key in ("targeted", "scanned", "clean", "with_findings", "skipped", "failed"):
+        assert str(payload["totals"][key]) in markdown
+        assert str(payload["totals"][key]) in html
+
+    for name, entry in payload["by_match"].items():
+        assert name in markdown
+        assert name in html
+        assert entry["severity"] in html
+
+    # A clean repository is accounted for in the totals rather than linked, so
+    # only the ranked and the never-read ones carry a link — in both forms.
+    for repository in payload["repositories"]:
+        if repository["report"] and repository["status"] != "clean":
+            assert repository["report"] in markdown
+            assert repository["report"] in html
+
+    # Self-contained: nothing to fetch when it is opened from a file share.
+    for external in ("<link", 'src="', "@import"):
+        assert external not in html
+
+
+def test_the_html_summary_bands_its_image_findings(estate):
+    config, _ = estate
+    _, layout = run(config)
+
+    html = layout.summary_html_file.read_text(encoding="utf-8")
+    payload = json.loads(layout.summary_json_file.read_text(encoding="utf-8"))
+
+    assert payload["similarity_threshold"] == 10
+    # The band beyond the threshold could never hold a finding, so it is absent.
+    assert [band["name"] for band in payload["confidence_bands"]] == [
+        "very high",
+        "high",
+        "medium",
+        "low",
+    ]
+    assert "Likeness confidence" in html
+    assert ">very high<" in html
 
 
 def test_findings_span_text_images_and_inlined_images(estate):

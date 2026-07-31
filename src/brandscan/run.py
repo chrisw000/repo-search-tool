@@ -289,9 +289,13 @@ def execute_run(
     write_summary(
         outcome.results,
         outcome.run_errors,
+        config,
         layout.summary_file,
         layout.summary_json_file,
+        layout.summary_html_file,
     )
+    # The Markdown stays the run's nominal summary; the HTML is the same
+    # document for a reader, not a different artifact to point tooling at.
     outcome.summary_path = layout.summary_file
 
     info(
