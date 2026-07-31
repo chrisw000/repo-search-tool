@@ -163,8 +163,9 @@ Work up in three steps rather than pointing it at 400 repositories cold.
     --repo contoso/checkout-ui `
     --repo contoso/brand-assets
 
-# c. Read what came out before scaling up.
-code .\brandscan-output\executive-summary.md
+# c. Read what came out before scaling up. Each run writes its own dated
+#    folder, so this is the newest one.
+code (Get-ChildItem .\brandscan-output\*-run | Sort-Object Name)[-1]\executive-summary.md
 ```
 
 **Choose the trial set deliberately.** Include at least one legacy repository
@@ -213,12 +214,19 @@ Useful flags:
 | `--limit N` | stop after N repositories |
 | `--refresh` | re-acquire and re-scan repositories an earlier run completed |
 | `--no-resume` | ignore the checkpoint entirely |
+| `--run-id NAME` | write to this run folder, rather than choosing one |
 | `--skip-preflight` | skip the auth check (offline testing only) |
 | `--verbose` | debug-level logging |
 
 A run is resumable: progress is checkpointed after every repository, so an
 interrupted run picks up where it stopped. Interrupt with Ctrl-C and re-run the
-same command.
+same command — an unfinished run is continued in place.
+
+Once a run has finished, re-running the same command starts a **new** run
+folder rather than reopening the finished one, so the earlier run's reports
+survive to be compared against. `--refresh` and `--no-resume` likewise start a
+new run. To add to or redo a specific earlier run instead, name it:
+`--run-id 2026-07-31-142530-run`.
 
 Exit codes: `0` clean run, `1` completed with failures or run-level errors,
 `2` configuration error, `3` authentication preflight failed.
@@ -227,15 +235,29 @@ Exit codes: `0` clean run, `1` completed with failures or run-level errors,
 
 ```
 brandscan-output/
-  executive-summary.md          # totals, triage order, breakdowns
-  executive-summary.json
-  checkpoint.json               # resumability
-  run.log.jsonl                 # structured run log, one JSON object per line
-  clones/<host>/<org>/<repo>/   # managed shallow clones (reset on re-run)
-  reports/<host>/<org>/<repo>/
-    report.md                   # the hand-off: fix instructions
-    report.json                 # machine-readable sidecar
+  clones/<host>/<org>/<repo>/     # managed shallow clones (reset on re-run)
+  2026-07-31-142530-run/          # one folder per run, UTC, sorts by date
+    executive-summary.md          # totals, triage order, breakdowns
+    executive-summary.html        # the same document, browsable
+    executive-summary.json
+    run.json                      # which run this is, and whether it finished
+    checkpoint.json               # resumability
+    run.log.jsonl                 # structured run log, one JSON object per line
+    reports/<host>/<org>/<repo>/
+      report.md                   # the hand-off: fix instructions
+      report.json                 # machine-readable sidecar
+  2026-08-04-090113-run/          # the next run, left to compare against
+    ...
 ```
+
+Everything a run produces sits in its own folder, so a later run never
+overwrites an earlier one's evidence. The clones are the exception: they are
+working copies rather than results, shared between runs and always reset to the
+current default-branch tip, and what a run actually saw in one is pinned by the
+commit recorded in its reports.
+
+Run folders accumulate — nothing prunes them. Delete the ones you no longer
+want to compare against.
 
 Every report carries a provenance block — search-groups executed, reference
 labels searched, similarity threshold, scanned commit and branch, timestamp,
@@ -246,7 +268,8 @@ confused with "never scanned".
 Tail a long run with:
 
 ```powershell
-Get-Content .\brandscan-output\run.log.jsonl -Wait -Tail 20
+# The run folder is printed when the scan starts; paste it in here.
+Get-Content .\brandscan-output\2026-07-31-142530-run\run.log.jsonl -Wait -Tail 20
 ```
 
 ## Safety
