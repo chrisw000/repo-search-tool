@@ -105,5 +105,5 @@
   test count — 317 passing, up from 295. Suite runtime 75.0s against a 74.5s
   baseline measured on the same machine, so D4's `finditer` branch cost nothing
   measurable (task 2.6)
-- [ ] 6.3 On archive: sync the deltas into `openspec/specs/`, add the attribution-split
+- [x] 6.3 On archive: sync the deltas into `openspec/specs/`, add the attribution-split
   invariant to `CLAUDE.md`, and update its test count and Outstanding section

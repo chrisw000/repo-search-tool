@@ -25,7 +25,7 @@ not the code.
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 
-# Tests — full suite is ~55s, currently 295 passing.
+# Tests — full suite is ~75s, currently 317 passing.
 .\.venv\Scripts\python.exe -m pytest -q
 
 # A single file while iterating.
@@ -77,9 +77,11 @@ below) recorded in
 except invariant 9, whose decisions live in
 `openspec/changes/archive/2026-07-31-accept-numeric-config-scalars/design.md`,
 invariants 10–12, whose decisions live in
-`openspec/changes/archive/2026-07-31-enrich-executive-summary/design.md`, and
+`openspec/changes/archive/2026-07-31-enrich-executive-summary/design.md`,
 invariants 13–14, whose decisions live in
-`openspec/changes/archive/2026-07-31-per-run-output-directories/design.md`.
+`openspec/changes/archive/2026-07-31-per-run-output-directories/design.md`, and
+invariant 15, whose decisions live in
+`openspec/changes/archive/2026-07-31-qualify-font-asset-findings/design.md`.
 
 1. **Trim before any colour-mode conversion** (`images/trim.py`, D2).
    Converting an opaque image to RGBA first gives it a full-frame alpha channel;
@@ -168,6 +170,31 @@ invariants 13–14, whose decisions live in
     free to disagree with the summary. Cross-run comparison reads
     `executive-summary.json`.
 
+15. **A font asset is inventory until the brand claims it** (`config/defaults.py`,
+    D1/D2/D5). `font-references` reports assets whose matched text carries a
+    configured brand font; everything else the catch-all finds goes to
+    `unattributed-font-assets` at low severity. The two exist because a filename
+    pattern cannot tell `NS-Bold.woff2` from `fa-regular-400.eot`, and reporting
+    both as brand evidence buried the real finding under every vendor icon pack
+    in the estate. Do not collapse them back into one group that classifies each
+    finding: `Finding.severity` comes from the group, and the summary keys a row
+    by group name carrying one severity — a group whose findings disagreed would
+    force invariant 10's renderers to special-case fonts. Do not "tidy" the
+    inventory group away either; it is where a brand font that never says so in
+    its name surfaces, which is invariant 6.
+
+    The mechanism underneath is `exclude_matches` — expressions vetoing a match
+    by *the matched text*, beside `exclude`, which selects *files*. Three parts
+    of it are load-bearing. It vetoes per match, never per line: a line carrying
+    a vendor font link and a brand one must keep the brand one. The pattern loop
+    continues past a veto rather than breaking, so a later pattern in the group
+    can still match. And a group *with* exclusions iterates with `finditer`
+    while one without keeps `search` — `search` sees only the first occurrence,
+    so vetoing it would lose a second, unvetoed one on the same line; the branch
+    is there because this loop runs over every line of ~400 repositories. The
+    vendor denylist is seeded config, not a built-in: `exclude_matches: []`
+    restores the full inventory in one line, which is invariant 8 holding.
+
 ## Working on this
 
 - **The spec leads.** `openspec/specs/` is the current contract. For a behaviour
@@ -208,13 +235,17 @@ invariants 13–14, whose decisions live in
 
 ## Outstanding
 
-Nothing blocking. All five changes are implemented and their behaviour is
+Nothing blocking. All six changes are implemented and their behaviour is
 recorded in `openspec/specs/` — seven capability specs, the source of truth
 from here on.
 
-One thing is unverified against the real estate: nobody has yet taken two runs
-over the ~400 repositories and compared them. `per-run-output-directories` was
-verified against synthetic fixtures and a two-run smoke test only.
+Two things are unverified against the real estate. Nobody has yet taken two runs
+over the ~400 repositories and compared them; `per-run-output-directories` was
+verified against synthetic fixtures and a two-run smoke test only. And nobody
+has yet read a real executive summary since the font split, so the seeded vendor
+denylist is asserted rather than measured against this estate — the figure to
+look at is how much of `unattributed-font-assets` survives it, and whether
+anything in `font-references` is a false attribution.
 
 The scanner's own last open items (tasks 8.1, 8.3, 8.4) were verified against
 the operator's real environment on 2026-07-31: the validation set was
@@ -245,6 +276,17 @@ the same command, a finished one is left alone in favour of a new run, and
 `--run-id` names one outright. The `run-output-layout` capability was added and
 one requirement in `repository-acquisition` modified.
 
-All five changes are archived, so `openspec/changes/` holds only `archive/`
+`qualify-font-asset-findings` (archived 2026-07-31) added invariant 15 above.
+The seeded `font-references` group now reports only font assets whose matched
+text names a configured brand font; every other font asset goes to the new
+`unattributed-font-assets` group at low severity, seeded with match-text
+exclusions for well-known third-party icon packages. Search-groups gained
+`exclude_matches` — a general mechanism, available to any group — and the
+external font-service patterns widened from the bare host to host-plus-URL-tail
+so attribution and exclusion can both read the family name. One requirement was
+added and one modified in each of `text-pattern-search` and
+`scan-configuration`. No renderer changed. Verified against synthetic fixtures.
+
+All six changes are archived, so `openspec/changes/` holds only `archive/`
 and `openspec list` reports no active changes. The next piece of work starts
 with a new proposal.
