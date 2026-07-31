@@ -25,7 +25,7 @@ not the code.
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 
-# Tests — full suite is ~40s, currently 203 passing.
+# Tests — full suite is ~40s, currently 230 passing.
 .\.venv\Scripts\python.exe -m pytest -q
 
 # A single file while iterating.
@@ -53,7 +53,8 @@ src/brandscan/
   findings.py       Finding and ScanIssue — the unit both searches produce
   paths.py          output layout, namespaced host/org/repo
   logging_setup.py  JSONL run log and RunProgress counters
-  config/           loader (field-named validation), model, seeded groups, references
+  config/           loader (field-named validation), model, seeded groups,
+                    references, scalars (source-text-preserving YAML)
   acquisition/      preflight, enumeration, clone/refresh, checkpoint, gh+git wrappers
   scan/             walker, text search, base64 extraction, image search driver
   images/           trim, hashing, SVG rasterisation, matching strategy seam
@@ -67,7 +68,9 @@ openspec/changes/   in-flight changes; archive/ holds the ones already folded in
 
 Do not "simplify" these away. Each encodes a decision (the `Dn` references
 below) recorded in
-`openspec/changes/archive/2026-07-31-brand-asset-discovery-scanner/design.md`.
+`openspec/changes/archive/2026-07-31-brand-asset-discovery-scanner/design.md`,
+except invariant 9, whose decisions live in
+`openspec/changes/archive/2026-07-31-accept-numeric-config-scalars/design.md`.
 
 1. **Trim before any colour-mode conversion** (`images/trim.py`, D2).
    Converting an opaque image to RGBA first gives it a full-frame alpha channel;
@@ -103,6 +106,19 @@ below) recorded in
 8. **Search-groups are config, not code** (D8). Adding a class of brand
    reference must never require a code change. If a feature seems to need a new
    hardcoded category, that is a signal the group model needs extending instead.
+
+9. **String config comes from the scalar's source text** (`config/scalars.py`,
+   D2/D3). PyYAML implements YAML 1.1, so `07654321` — a plausible company
+   number — parses to `2054353`. Never coerce a config value with `str()`: build
+   it from `scalar_text()`, which prefers the `raw` source text. Getting this
+   wrong searches hundreds of repositories for a number that appears in none of
+   them and reports them all clean, which is invariant 6 in disguise.
+
+   `bool` is deliberately **not** wrapped. Python forbids subclassing it, so a
+   raw-carrying bool would have to subclass `int`, at which point
+   `isinstance(x, bool)` is false for it — `include_archived: true` would be
+   rejected and `similarity_threshold: true` would be accepted as `1`. Do not
+   "finish the job" by wrapping it.
 
 ## Working on this
 
@@ -144,15 +160,22 @@ below) recorded in
 
 ## Outstanding
 
-Nothing. Both changes are implemented and their behaviour is now recorded in
-`openspec/specs/` — six capability specs, the source of truth from here on.
-Tasks 8.1, 8.3, and 8.4 were the last open items and were verified against the
-operator's real environment on 2026-07-31: the validation set was assembled,
-the similarity threshold was confirmed empirically at the documented default of
-10, and a per-repo `report.md` was confirmed to ingest cleanly as fix
+Nothing. All three changes are implemented and their behaviour is now recorded
+in `openspec/specs/` — six capability specs, the source of truth from here on.
+
+The scanner's own last open items (tasks 8.1, 8.3, 8.4) were verified against
+the operator's real environment on 2026-07-31: the validation set was
+assembled, the similarity threshold was confirmed empirically at the documented
+default of 10, and a per-repo `report.md` was confirmed to ingest cleanly as fix
 instructions for an AI coding agent. Everything else was verified against
 synthetic fixtures.
 
-Both changes are archived, so `openspec/changes/` holds only `archive/` and
-`openspec list` reports no active changes. The next piece of work starts with a
-new proposal.
+`accept-numeric-config-scalars` (archived 2026-07-31) added invariant 9 above:
+a bare company number in `brand.legal` no longer needs quoting, and every
+string-valued config position is now built from the scalar's source text. Two
+requirements were added to `scan-configuration`. Verified against synthetic
+fixtures, including an end-to-end scan of a repository carrying `07654321`.
+
+All three changes are archived, so `openspec/changes/` holds only `archive/`
+and `openspec list` reports no active changes. The next piece of work starts
+with a new proposal.
