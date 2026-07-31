@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import io
 import warnings
-from pathlib import Path
 
 from PIL import Image
 
@@ -59,11 +58,3 @@ def rasterise_svg_bytes(data: bytes) -> Image.Image:
         raise
     except Exception as exc:
         raise RasterisationError(f"vector image could not be rendered: {exc}") from exc
-
-
-def rasterise_svg(path: Path) -> Image.Image:
-    try:
-        data = path.read_bytes()
-    except OSError as exc:
-        raise RasterisationError(f"vector image could not be read: {exc}") from exc
-    return rasterise_svg_bytes(data)

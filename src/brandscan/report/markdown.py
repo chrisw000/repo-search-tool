@@ -12,7 +12,7 @@ import json
 import re
 from pathlib import Path
 
-from brandscan.findings import Finding, MatchType
+from brandscan.findings import Finding, MatchType, ScanIssue, UnreadableCause
 from brandscan.results import RepoResult, RepoStatus
 
 MAX_LISTED_PER_TASK = 50
@@ -91,7 +91,24 @@ def _not_scanned_body(result: RepoResult) -> list[str]:
     ]
 
 
-def _clean_body() -> list[str]:
+def _clean_body(result: RepoResult) -> list[str]:
+    """State cleanliness against what was actually read, not against the repository.
+
+    With unread inputs present, "scanned in full" would be false, and a reader
+    who stopped at this section would carry away the wrong conclusion. The
+    findings verdict still stands — nothing was found in what was read — but its
+    scope has to be stated alongside it.
+    """
+    if result.issues:
+        return [
+            "## Nothing to change in what was read",
+            "",
+            "No text-pattern or image match was found in the content this scan "
+            f"could read. {len(result.issues)} input(s) could not be read and "
+            "were **not** assessed — see below. This repository is clean on "
+            "findings, not verified in full.",
+            "",
+        ]
     return [
         "## Nothing to change",
         "",
@@ -172,22 +189,50 @@ def _text_task_body(findings: list[Finding]) -> list[str]:
     return lines
 
 
+def _issue_groups(issues: list[ScanIssue]) -> list[tuple[UnreadableCause | None, list[ScanIssue]]]:
+    """Group unread inputs by cause, in the order an operator should read them.
+
+    A pointer to an unfetched asset, a committed placeholder, and a corrupt file
+    have nothing in common but their symptom. Presenting them as one list makes
+    the whole section look like the same undifferentiated defect, which is how a
+    reader learns to skip it.
+    """
+    buckets: dict[UnreadableCause | None, list[ScanIssue]] = {}
+    for issue in issues:
+        buckets.setdefault(issue.cause, []).append(issue)
+
+    order = list(UnreadableCause)
+    return sorted(
+        buckets.items(),
+        key=lambda item: order.index(item[0]) if item[0] is not None else len(order),
+    )
+
+
 def _issues_body(result: RepoResult) -> list[str]:
     if not result.issues:
         return []
     lines = [
         "## Files that could not be read",
         "",
-        "These were skipped. They may still contain brand residue, so treat this "
-        "section as unassessed rather than clean.",
+        f"{len(result.issues)} input(s) were not assessed. They may still contain "
+        "brand residue, so treat this section as unassessed rather than clean. "
+        "Each group states what would be needed to assess it.",
         "",
     ]
-    for issue in result.issues[:MAX_LISTED_PER_TASK]:
-        where = f"`{issue.path}`" + (f" line {issue.line}" if issue.line else "")
-        lines.append(f"- {where} — {issue.reason}")
-    if len(result.issues) > MAX_LISTED_PER_TASK:
-        lines.append(f"- _… {len(result.issues) - MAX_LISTED_PER_TASK} more, see report.json_")
-    lines.append("")
+
+    remaining = MAX_LISTED_PER_TASK
+    for cause, issues in _issue_groups(result.issues):
+        heading = cause.heading if cause else "Not read"
+        lines += [f"### {heading} ({len(issues)})", ""]
+        if cause:
+            lines += [f"**What to do:** {cause.remediation}", ""]
+        for issue in issues[:remaining]:
+            where = f"`{issue.path}`" + (f" line {issue.line}" if issue.line else "")
+            lines.append(f"- {where} — {issue.reason}")
+        if len(issues) > remaining:
+            lines.append(f"- _… {len(issues) - remaining} more, see report.json_")
+        remaining = max(0, remaining - len(issues))
+        lines.append("")
     return lines
 
 
@@ -220,7 +265,7 @@ def render_repo_markdown(result: RepoResult) -> str:
     if result.status in (RepoStatus.SKIPPED, RepoStatus.FAILED):
         lines += _not_scanned_body(result)
     elif result.status is RepoStatus.CLEAN:
-        lines += _clean_body()
+        lines += _clean_body(result)
     else:
         lines += _findings_body(result)
 

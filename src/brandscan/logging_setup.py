@@ -12,11 +12,22 @@ import json
 import logging
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 LOGGER_NAME = "brandscan"
+
+# Libraries that log about a file they cannot name. Their records are re-routed
+# rather than silenced: when a malformed file is genuinely puzzling, the
+# parser's own message is the only real evidence, and discarding it leaves an
+# operator with nothing.
+THIRD_PARTY_LOGGERS = ("svglib", "reportlab")
+
+_current_file: ContextVar[str] = ContextVar("brandscan_current_file", default="")
 
 
 class _JsonFormatter(logging.Formatter):
@@ -47,10 +58,77 @@ class _ConsoleFormatter(logging.Formatter):
         return f"{stamp} {record.levelname:<7} {record.getMessage()}{suffix}"
 
 
+@contextmanager
+def processing(path: str) -> Iterator[None]:
+    """Name the file being processed, for records that cannot name it themselves.
+
+    A third-party parser is handed bytes and knows nothing about where they came
+    from, so its message arrives unattributable. Over ~400 repositories that is
+    hundreds of lines an operator cannot act on. This is what supplies the
+    missing half.
+    """
+    token = _current_file.set(path)
+    try:
+        yield
+    finally:
+        _current_file.reset(token)
+
+
+class _RelayHandler(logging.Handler):
+    """Forwards another library's records into the run log, at debug level.
+
+    Debug because these are diagnostics about a file that is already being
+    recorded as unread by the scan itself: the issue is the finding, this is the
+    evidence behind it.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = record.getMessage()
+        except Exception:  # a broken format string must not end a run
+            message = record.msg if isinstance(record.msg, str) else "<unformattable>"
+        debug(
+            message,
+            library=record.name,
+            library_level=record.levelname,
+            file=_current_file.get() or "unknown",
+        )
+
+
+def contain_third_party_loggers() -> None:
+    """Route decoder and rasteriser diagnostics through the run log only.
+
+    Without this, `svglib` writes straight to stderr once per unparseable file,
+    naming none of them. Propagation is disabled so nothing reaches the root
+    logger's last-resort handler, and their own handlers are replaced so nothing
+    they installed at import time survives.
+
+    The threshold is the libraries' own warning level, which is exactly what
+    their last-resort handler would have shown. Nothing an operator could
+    previously see is lost; what is gained is the filename and a home in the run
+    log. Relaying their debug chatter as well would bury the run log under one
+    entry per ignored SVG node across ~400 repositories.
+    """
+    handler = _RelayHandler()
+    handler.setLevel(logging.WARNING)
+    for name in THIRD_PARTY_LOGGERS:
+        library = logging.getLogger(name)
+        library.handlers.clear()
+        library.addHandler(handler)
+        library.setLevel(logging.WARNING)
+        library.propagate = False
+
+
 def configure_logging(log_file: Path | None = None, verbose: bool = False) -> logging.Logger:
     """Install console and (optionally) JSON-file handlers on the run logger."""
+    contain_third_party_loggers()
     logger = logging.getLogger(LOGGER_NAME)
-    logger.setLevel(logging.DEBUG if verbose else logging.INFO)
+    # The logger passes everything and the handlers decide: the run log is the
+    # record of what happened and wants the debug detail — including relayed
+    # decoder diagnostics — while the console shows an operator only what they
+    # can act on. Gating here instead would drop debug records before the file
+    # handler that exists to keep them ever saw them.
+    logger.setLevel(logging.DEBUG)
     logger.handlers.clear()
     logger.propagate = False
 

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from brandscan.config.model import ScanScope, SearchGroup
-from brandscan.findings import Finding, MatchType, ScanIssue
+from brandscan.findings import Finding, MatchType, ScanIssue, UnreadableCause
 from brandscan.scan.embedded import EmbeddedImage, find_embedded_images
 from brandscan.scan.walker import FileWalker, group_covers
 
@@ -114,8 +114,16 @@ def scan_text(root: Path, scope: ScanScope, groups: list[SearchGroup]) -> TextSc
         images, failures = find_embedded_images(relative, lines)
         result.embedded_images.extend(images)
         for line_number, reason in failures:
+            # A payload that will not even base64-decode is a corrupt image
+            # inlined into a text file — the same class of problem as a corrupt
+            # image file, and reported the same way.
             result.issues.append(
-                ScanIssue(path=relative, reason=reason, line=line_number)
+                ScanIssue(
+                    path=relative,
+                    reason=reason,
+                    line=line_number,
+                    cause=UnreadableCause.MALFORMED,
+                )
             )
 
     result.findings.sort(key=lambda finding: finding.sort_key)
