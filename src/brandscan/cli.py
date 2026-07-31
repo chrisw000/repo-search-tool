@@ -14,7 +14,7 @@ from brandscan.acquisition.preflight import PreflightError
 from brandscan.config.loader import ConfigError, load_config
 from brandscan.config.model import Config, ExternalRepo, Target
 from brandscan.logging_setup import configure_logging, info, warning
-from brandscan.paths import OutputLayout
+from brandscan.paths import select_layout
 from brandscan.run import execute_run
 
 MODE_MANAGED = "managed"
@@ -64,6 +64,15 @@ def build_parser() -> argparse.ArgumentParser:
             "scan only this repository; repeatable. Narrows a configured target "
             "when given as ORG/NAME, or adds one outright as HOST/ORG/NAME. "
             "Intended for trial runs over a chosen validation set."
+        ),
+    )
+    scan.add_argument(
+        "--run-id",
+        metavar="NAME",
+        help=(
+            "write to this run directory under the output directory, creating "
+            "it if it does not exist. Without it, an unfinished run is "
+            "continued and a finished one is left alone in favour of a new run"
         ),
     )
     scan.add_argument("--threshold", type=int, help="override the similarity threshold")
@@ -219,7 +228,13 @@ def _run_scan(args: argparse.Namespace) -> int:
             "has none of that kind",
         )
 
-    layout = OutputLayout(root=config.output_dir)
+    # Selected before logging is configured, because the log belongs to the run
+    # directory this chooses.
+    layout = select_layout(
+        config.output_dir,
+        run_id=args.run_id,
+        force_new=args.no_resume or args.refresh,
+    )
     layout.bootstrap()
     configure_logging(log_file=layout.log_file, verbose=args.verbose)
     info(
@@ -227,7 +242,9 @@ def _run_scan(args: argparse.Namespace) -> int:
         version=tool_version(),
         config=str(config.source_path or args.config),
         mode=args.mode,
+        run=layout.run_id,
     )
+    print(f"Run: {layout.run_dir}")
 
     outcome = execute_run(
         config=config,
@@ -236,6 +253,7 @@ def _run_scan(args: argparse.Namespace) -> int:
         refresh=args.refresh,
         limit=args.limit,
         skip_preflight=args.skip_preflight,
+        mode=args.mode,
     )
 
     counts = outcome.totals

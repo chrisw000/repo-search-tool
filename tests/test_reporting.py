@@ -237,7 +237,7 @@ def test_unread_inputs_are_distinguished_by_cause_with_their_remedies():
 
 
 def test_the_sidecar_carries_the_same_classification(tmp_path: Path):
-    layout = OutputLayout(tmp_path)
+    layout = OutputLayout(root=tmp_path, run_dir=tmp_path / "run")
     written = result(issues=MIXED_ISSUES)
     markdown_path = layout.report_markdown("github.com", "contoso", "widgets")
     json_path = layout.report_json("github.com", "contoso", "widgets")
@@ -348,14 +348,14 @@ def test_a_result_round_trips_through_its_sidecar():
 
 
 def test_same_name_on_two_hosts_gets_two_reports(tmp_path: Path):
-    layout = OutputLayout(root=tmp_path)
+    layout = OutputLayout(root=tmp_path, run_dir=tmp_path / "run")
     first = layout.report_markdown("github.com", "contoso", "portal")
     second = layout.report_markdown("ghes.example", "contoso", "portal")
     assert first != second
 
 
 def test_same_name_in_two_organisations_gets_two_reports(tmp_path: Path):
-    layout = OutputLayout(root=tmp_path)
+    layout = OutputLayout(root=tmp_path, run_dir=tmp_path / "run")
     first = layout.report_markdown("github.com", "contoso", "portal")
     second = layout.report_markdown("github.com", "fabrikam", "portal")
     assert first != second
@@ -763,7 +763,7 @@ def test_the_sidecar_agrees_with_the_rendered_documents():
 
 
 def test_all_three_forms_are_written(tmp_path: Path):
-    layout = OutputLayout(tmp_path)
+    layout = OutputLayout(root=tmp_path, run_dir=tmp_path / "run")
     write_summary(
         summary_set(),
         [],

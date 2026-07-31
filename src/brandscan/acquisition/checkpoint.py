@@ -9,11 +9,11 @@ run again.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from brandscan.atomic import write_json_atomic
 
 CHECKPOINT_VERSION = 1
 
@@ -56,22 +56,7 @@ class Checkpoint:
 
     def save(self) -> None:
         """Write atomically, so an interrupt cannot corrupt the checkpoint."""
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"version": CHECKPOINT_VERSION, "repositories": self.entries}
-        handle = tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=str(self.path.parent),
-            prefix=self.path.name + ".",
-            suffix=".tmp",
-            delete=False,
+        write_json_atomic(
+            self.path,
+            {"version": CHECKPOINT_VERSION, "repositories": self.entries},
         )
-        try:
-            with handle as stream:
-                json.dump(payload, stream, ensure_ascii=False, indent=2)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(handle.name, self.path)
-        except BaseException:
-            Path(handle.name).unlink(missing_ok=True)
-            raise

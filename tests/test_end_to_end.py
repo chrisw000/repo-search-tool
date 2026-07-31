@@ -17,9 +17,10 @@ import yaml
 
 from brandscan.cli import main
 from brandscan.config.loader import validate_config
-from brandscan.paths import OutputLayout
+from brandscan.paths import OutputLayout, discover_runs, select_layout
 from brandscan.results import RepoStatus
 from brandscan.run import execute_run
+from brandscan.run_record import RunRecord
 from tests.conftest import draw_logo, git, make_git_repo
 
 HOST = "github.com"
@@ -103,9 +104,21 @@ def estate(tmp_path: Path, reference_dir: Path):
     return config, {"widgets": widgets, "dirty": dirty, "pristine": pristine}
 
 
-def run(config, resume=True, refresh=False):
-    layout = OutputLayout(root=config.output_dir)
+def run(config, resume=True, refresh=False, layout=None):
+    """One invocation's worth of run, choosing its run directory as the CLI does.
+
+    Passing `layout` re-enters a run directory outright, which is what
+    `--run-id` does.
+    """
+    if layout is None:
+        layout = select_layout(config.output_dir, force_new=not resume or refresh)
     return execute_run(config, layout, resume=resume, refresh=refresh), layout
+
+
+def latest_layout(root: Path) -> OutputLayout:
+    """The run directory the most recent invocation wrote to."""
+    run_dir, _ = discover_runs(root)[0]
+    return OutputLayout(root=root, run_dir=run_dir)
 
 
 # --- The run as a whole ---------------------------------------------------
@@ -290,7 +303,8 @@ def test_a_clean_external_clone_is_not_modified_either(estate):
 # --- Resumability ---------------------------------------------------------
 
 
-def test_a_resumed_run_does_not_rescan_completed_repositories(estate, monkeypatch):
+def test_re_entering_a_run_does_not_rescan_its_completed_repositories(estate, monkeypatch):
+    """Re-entering a run directory restores from its checkpoint, as `--run-id` does."""
     config, _ = estate
     first, layout = run(config)
     assert layout.checkpoint_file.is_file()
@@ -301,7 +315,7 @@ def test_a_resumed_run_does_not_rescan_completed_repositories(estate, monkeypatc
         raise AssertionError("a completed repository was scanned again")
 
     monkeypatch.setattr(run_module, "scan_repository", refuse)
-    second, _ = run(config)
+    second, _ = run(config, layout=layout)
 
     assert len(second.results) == len(first.results)
     assert {r.target.name: r.status for r in second.results} == {
@@ -330,13 +344,16 @@ def test_an_interrupted_run_resumes_and_covers_the_full_target_set(estate, monke
     with pytest.raises(KeyboardInterrupt):
         run(config)
 
-    layout = OutputLayout(root=config.output_dir)
-    partial = json.loads(layout.checkpoint_file.read_text(encoding="utf-8"))
+    interrupted = latest_layout(config.output_dir)
+    partial = json.loads(interrupted.checkpoint_file.read_text(encoding="utf-8"))
     assert len(partial["repositories"]) == 2
 
     monkeypatch.setattr(run_module, "scan_repository", real)
     outcome, layout = run(config)
 
+    # Re-running the same command continued the interrupted run rather than
+    # starting a new one, which is what makes the results cover the whole set.
+    assert layout.run_dir == interrupted.run_dir
     assert len(outcome.results) == 5
     assert outcome.totals["targeted"] == 5
     for result in outcome.results:
@@ -344,6 +361,66 @@ def test_an_interrupted_run_resumes_and_covers_the_full_target_set(estate, monke
 
 
 def test_refresh_rescans_everything(estate, monkeypatch):
+    config, _ = estate
+    _, layout = run(config)
+
+    import brandscan.run as run_module
+
+    real = run_module.scan_repository
+    scanned: list[str] = []
+
+    def counting(target, *args, **kwargs):
+        scanned.append(target.name)
+        return real(target, *args, **kwargs)
+
+    monkeypatch.setattr(run_module, "scan_repository", counting)
+    # Into the same run directory, so it is the refresh doing the work rather
+    # than a fresh directory having no checkpoint to begin with.
+    run(config, layout=layout, refresh=True)
+    assert len(scanned) == 5
+
+
+def test_a_missing_report_is_rescanned_rather_than_left_as_a_hole(estate):
+    config, _ = estate
+    _, layout = run(config)
+    layout.report_json(HOST, ORG, "widgets").unlink()
+    layout.report_markdown(HOST, ORG, "widgets").unlink()
+
+    outcome, layout = run(config, layout=layout)
+    assert layout.report_markdown(HOST, ORG, "widgets").is_file()
+    widgets = next(r for r in outcome.results if r.target.name == "widgets")
+    assert widgets.findings
+
+
+# --- Run directories ------------------------------------------------------
+
+
+def test_two_runs_over_one_output_root_keep_their_own_artifacts(estate):
+    """The point of the whole arrangement: the first run survives the second."""
+    config, _ = estate
+    _, first = run(config)
+    before = {
+        path: path.read_bytes()
+        for path in first.run_dir.rglob("*")
+        if path.is_file() and path.name != "run.json"
+    }
+
+    _, second = run(config)
+    assert second.run_dir != first.run_dir
+
+    for layout in (first, second):
+        assert layout.summary_file.is_file()
+        for name in ("widgets", "pristine", "dirty", "legacy", "absent"):
+            assert layout.report_markdown(HOST, ORG, name).is_file()
+
+    assert {
+        path: path.read_bytes()
+        for path in first.run_dir.rglob("*")
+        if path.is_file() and path.name != "run.json"
+    } == before
+
+
+def test_a_new_run_does_not_inherit_an_earlier_runs_progress(estate, monkeypatch):
     config, _ = estate
     run(config)
 
@@ -357,20 +434,102 @@ def test_refresh_rescans_everything(estate, monkeypatch):
         return real(target, *args, **kwargs)
 
     monkeypatch.setattr(run_module, "scan_repository", counting)
-    run(config, refresh=True)
+    outcome, _ = run(config)
+
     assert len(scanned) == 5
+    assert outcome.totals["targeted"] == 5
 
 
-def test_a_missing_report_is_rescanned_rather_than_left_as_a_hole(estate):
+def test_clones_are_shared_across_runs_and_outside_every_run_directory(estate):
+    config, _ = estate
+    _, first = run(config)
+    _, second = run(config)
+
+    assert first.clones_dir == second.clones_dir == config.output_dir / "clones"
+    assert first.run_dir.name not in first.clones_dir.parts
+    # Starting a second run neither duplicated the clone tree nor moved it.
+    assert not any(
+        child.name == "clones" for child in first.run_dir.iterdir()
+    )
+
+
+def test_run_directories_sort_chronologically(estate):
+    config, _ = estate
+    _, first = run(config)
+    _, second = run(config, resume=False)
+
+    names = [run_dir.name for run_dir, _ in discover_runs(config.output_dir)]
+    assert names == [second.run_dir.name, first.run_dir.name]
+
+
+def test_the_run_record_states_what_the_run_was_and_that_it_finished(estate):
     config, _ = estate
     _, layout = run(config)
-    layout.report_json(HOST, ORG, "widgets").unlink()
-    layout.report_markdown(HOST, ORG, "widgets").unlink()
 
-    outcome, layout = run(config)
-    assert layout.report_markdown(HOST, ORG, "widgets").is_file()
-    widgets = next(r for r in outcome.results if r.target.name == "widgets")
-    assert widgets.findings
+    record = RunRecord.load(layout.run_record_file)
+    assert record is not None
+    assert record.run_id == layout.run_dir.name
+    assert record.started_at
+    assert record.tool_version
+    assert record.mode
+    assert record.is_finished
+    # Identity and lifecycle only: the figures live in the summary, which is
+    # rendered from one model precisely so its forms cannot disagree.
+    payload = json.loads(layout.run_record_file.read_text(encoding="utf-8"))
+    assert not {"findings", "totals", "clean", "scanned"} & set(payload)
+
+
+def test_an_interrupted_run_is_recorded_as_unfinished(estate, monkeypatch):
+    config, _ = estate
+    import brandscan.run as run_module
+
+    def stop(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(run_module, "scan_repository", stop)
+    with pytest.raises(KeyboardInterrupt):
+        run(config)
+
+    layout = latest_layout(config.output_dir)
+    record = RunRecord.load(layout.run_record_file)
+    assert record is not None
+    assert not record.is_finished
+
+
+def test_a_run_directory_with_an_unreadable_record_is_passed_over(estate):
+    config, _ = estate
+    _, first = run(config)
+    first.run_record_file.write_text("{ truncated", encoding="utf-8")
+
+    _, second = run(config)
+    assert second.run_dir != first.run_dir
+    # Discovery still lists it; it simply says nothing about its own state.
+    assert dict(discover_runs(config.output_dir))[first.run_dir] is None
+
+
+def test_a_named_run_is_used_outright(estate):
+    config, _ = estate
+    _, first = run(config)
+    assert RunRecord.load(first.run_record_file).is_finished
+
+    named = select_layout(config.output_dir, run_id=first.run_dir.name)
+    assert named.run_dir == first.run_dir
+
+
+def test_an_output_root_holding_older_artifacts_is_left_alone(estate):
+    """Artifacts written before run directories existed are not read or moved."""
+    config, _ = estate
+    legacy_summary = config.output_dir / "executive-summary.md"
+    legacy_summary.parent.mkdir(parents=True, exist_ok=True)
+    legacy_summary.write_text("an earlier version's summary\n", encoding="utf-8")
+    legacy_reports = config.output_dir / "reports"
+    legacy_reports.mkdir(parents=True, exist_ok=True)
+
+    _, layout = run(config)
+
+    assert layout.run_dir != config.output_dir
+    assert legacy_summary.read_text(encoding="utf-8") == "an earlier version's summary\n"
+    assert not any(legacy_reports.iterdir())
 
 
 # --- The command line -----------------------------------------------------
@@ -403,7 +562,7 @@ def test_cli_scan_writes_reports_and_a_log(estate, tmp_path: Path, capsys):
 
     out = capsys.readouterr().out
     assert "Executive summary" in out
-    layout = OutputLayout(root=tmp_path / "cli-out")
+    layout = latest_layout(tmp_path / "cli-out")
     assert layout.summary_file.is_file()
     assert layout.report_markdown(HOST, ORG, "widgets").is_file()
 
@@ -421,6 +580,53 @@ def test_cli_scan_writes_reports_and_a_log(estate, tmp_path: Path, capsys):
     assert last["done"] == "5/5"
     assert {"clean", "with_findings", "skipped", "failed"} <= set(last)
     assert any(r["message"] == "brandscan starting" for r in records)
+
+
+def test_cli_gives_each_invocation_its_own_run_and_can_be_pointed_at_one(
+    estate, tmp_path: Path, capsys
+):
+    config, _ = estate
+    output = tmp_path / "runs-out"
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "brand": {"names": ["Contoso"]},
+                "external_repositories": [
+                    {
+                        "host": HOST,
+                        "org": ORG,
+                        "name": "pristine",
+                        "path": str(
+                            next(
+                                e.path
+                                for e in config.external_repositories
+                                if e.name == "pristine"
+                            )
+                        ),
+                    }
+                ],
+                "output_dir": str(output),
+            }
+        ),
+        encoding="utf-8",
+    )
+    command = ["scan", "--config", str(config_path), "--mode", "external"]
+
+    assert main(command) == 0
+    first = latest_layout(output).run_dir
+    assert f"Run: {first}" in capsys.readouterr().out
+
+    # The first run finished, so the second is a run of its own.
+    assert main(command) == 0
+    runs = [run_dir for run_dir, _ in discover_runs(output)]
+    assert len(runs) == 2
+    assert first in runs
+
+    # Naming one re-enters it rather than starting a third.
+    assert main(command + ["--run-id", first.name]) == 0
+    assert len(discover_runs(output)) == 2
+    assert (first / "executive-summary.md").is_file()
 
 
 def test_cli_reports_a_configuration_error_by_field(tmp_path: Path, capsys):
@@ -470,7 +676,7 @@ def test_cli_external_root_works_without_any_configured_target(estate, tmp_path:
     exit_code = main(["scan", "--config", str(config_path), "--external-root", str(root)])
     assert exit_code in (0, 1)
 
-    layout = OutputLayout(root=tmp_path / "root-out")
+    layout = latest_layout(tmp_path / "root-out")
     assert layout.summary_file.is_file()
     # Hosts and organisations were derived from each clone's own remote.
     assert layout.report_markdown(HOST, ORG, "widgets").is_file()
@@ -579,7 +785,7 @@ output_dir: {(tmp_path / "num-out").as_posix()}
 
     assert main(["scan", "--config", str(config_path), "--mode", "external"]) == 0
 
-    layout = OutputLayout(root=tmp_path / "num-out")
+    layout = latest_layout(tmp_path / "num-out")
     payload = json.loads(
         layout.report_json(HOST, ORG, "accounts").read_text(encoding="utf-8")
     )
