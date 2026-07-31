@@ -495,6 +495,51 @@ def test_cli_repo_flag_rejects_a_malformed_selector(tmp_path: Path, capsys):
     assert "ORG/NAME or HOST/ORG/NAME" in capsys.readouterr().err
 
 
+def test_an_unquoted_company_number_is_actually_found_by_a_scan(tmp_path: Path):
+    """The requirement is about what a scan finds, not what validation accepts.
+
+    `07654321` is all octal digits behind a leading zero, so YAML 1.1 parses it
+    as 2054353. If the loader searched for the parsed value, this repository
+    would be reported clean while plainly carrying the number.
+    """
+    work = tmp_path / "work"
+    repo = make_git_repo(
+        work / "accounts",
+        f"https://{HOST}/{ORG}/accounts.git",
+        {"footer.html": "<p>Contoso Limited, registered in England, "
+                        "company number 07654321.</p>\n"},
+    )
+
+    config_path = tmp_path / "config.yaml"
+    # Written as text, not dumped: a dump would quote the numeral and so would
+    # never exercise the path this test exists for.
+    config_path.write_text(
+        f"""
+brand:
+  legal:
+    - 07654321
+external_repositories:
+  - host: {HOST}
+    org: {ORG}
+    name: accounts
+    path: {repo.as_posix()}
+output_dir: {(tmp_path / "num-out").as_posix()}
+""",
+        encoding="utf-8",
+    )
+
+    assert main(["scan", "--config", str(config_path), "--mode", "external"]) == 0
+
+    layout = OutputLayout(root=tmp_path / "num-out")
+    payload = json.loads(
+        layout.report_json(HOST, ORG, "accounts").read_text(encoding="utf-8")
+    )
+    assert payload["findings"], "the company number was not found"
+    excerpts = " ".join(f.get("excerpt", "") for f in payload["findings"])
+    assert "07654321" in excerpts
+    assert "2054353" not in excerpts
+
+
 def test_cli_mode_external_ignores_host_targets(estate, tmp_path: Path):
     config, _ = estate
     config_path = tmp_path / "config.yaml"
