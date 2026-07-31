@@ -73,14 +73,37 @@ brand:
 # Retune or extend the seeded groups here. A group named after a seeded one
 # overrides just the fields you give; any other name defines a new group, which
 # runs through exactly the same engine.
+#
+# Two exclusion fields, doing different jobs:
+#
+#   exclude          file-path globs. Selects the FILES a group is evaluated
+#                    against, before any pattern runs.
+#   exclude_matches  regular expressions. Vetoes a MATCH by the text that
+#                    matched, so a class of unwanted string can be dropped
+#                    without rewriting the group's patterns. Evaluated per
+#                    match, so an excluded match on a line never suppresses an
+#                    unexcluded one beside it. Case sensitivity follows the
+#                    group's own case_sensitive flag.
 search_groups:
   - name: brand-names
     severity: high
+
+# A font asset that names a configured brand font is a brand finding in
+# `font-references`. One that names none cannot be tied to the brand, so it goes
+# to `unattributed-font-assets` at low severity — an inventory for triage, not a
+# brand match, because a brand font file frequently carries no brand string in
+# its name. That group is seeded with exclusions for well-known third-party
+# packages (Glyphicons, Font Awesome, Bootstrap Icons, …). Clear them to get the
+# full inventory back:
+#
+#  - name: unattributed-font-assets
+#    exclude_matches: []
 
 #  - name: internal-tooling
 #    patterns:
 #      - "contoso-deploy(-cli)?"
 #    include: ["*.yml", "*.yaml", "*.ps1"]
+#    exclude_matches: ["contoso-deploy-sample"]
 #    severity: low
 #    remediation: "Point the pipeline at the renamed deployment tool."
 

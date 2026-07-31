@@ -165,10 +165,29 @@ def test_default_groups_are_seeded(tmp_path: Path):
         "brand-names",
         "font-names",
         "font-references",
+        "unattributed-font-assets",
         "legacy-domains",
         "brand-colours",
         "legal-strings",
     }
+
+
+def test_the_two_font_asset_groups_are_seeded_at_different_severities(tmp_path: Path):
+    """An asset the scan could not tie to the brand must not rank alongside one it could."""
+    config = config_from({"brand": {"names": ["Contoso"], "fonts": ["Contoso Sans"]}}, tmp_path)
+    attributed = config.group("font-references")
+    unattributed = config.group("unattributed-font-assets")
+    assert attributed is not None and unattributed is not None
+    assert unattributed.severity.weight < attributed.severity.weight
+
+
+def test_the_unattributed_font_group_is_seeded_with_vendor_exclusions(tmp_path: Path):
+    config = config_from({"brand": {"names": ["Contoso"], "fonts": ["Contoso Sans"]}}, tmp_path)
+    group = config.group("unattributed-font-assets")
+    assert group is not None
+    joined = " ".join(group.exclude_matches).lower()
+    for vendor in ("glyphicons", "awesome", "ionicons", "octicons", "typicons"):
+        assert vendor in joined
 
 
 def test_a_new_group_is_added_by_configuration_alone(tmp_path: Path):
@@ -211,6 +230,81 @@ def test_disabling_an_unknown_group_is_named(tmp_path: Path):
     with pytest.raises(ConfigError) as excinfo:
         config_from({"disable_search_groups": ["nonexistent"]}, tmp_path)
     assert excinfo.value.field == "disable_search_groups"
+
+
+# --- Match-text exclusions ------------------------------------------------
+
+
+def test_a_group_declares_match_text_exclusions(tmp_path: Path):
+    config = config_from(
+        {
+            "search_groups": [
+                {
+                    "name": "tooling",
+                    "patterns": ["contoso-[a-z]+"],
+                    "exclude_matches": ["contoso-sample"],
+                }
+            ]
+        },
+        tmp_path,
+    )
+    group = config.group("tooling")
+    assert group is not None
+    assert group.exclude_matches == ["contoso-sample"]
+
+
+def test_an_invalid_exclusion_expression_is_named(tmp_path: Path):
+    with pytest.raises(ConfigError) as excinfo:
+        config_from(
+            {
+                "search_groups": [
+                    {"name": "tooling", "patterns": ["ok"], "exclude_matches": ["("]}
+                ]
+            },
+            tmp_path,
+        )
+    assert excinfo.value.field == "search_groups[tooling].exclude_matches"
+
+
+def test_exclusions_on_a_seeded_group_behave_as_on_a_user_defined_one(tmp_path: Path):
+    """A seeded group is an ordinary group: same field, same effect."""
+    config = config_from(
+        {"search_groups": [{"name": "brand-names", "exclude_matches": ["Contoso Labs"]}]},
+        tmp_path,
+    )
+    group = config.group("brand-names")
+    assert group is not None
+    assert group.exclude_matches == ["Contoso Labs"]
+    assert group.patterns  # the seeded patterns survive the override
+
+
+def test_seeded_font_asset_exclusions_are_clearable(tmp_path: Path):
+    config = config_from(
+        {"search_groups": [{"name": "unattributed-font-assets", "exclude_matches": []}]},
+        tmp_path,
+    )
+    group = config.group("unattributed-font-assets")
+    assert group is not None
+    assert group.exclude_matches == []
+
+
+def test_a_group_with_exclusions_but_no_patterns_is_still_rejected(tmp_path: Path):
+    """Exclusions narrow a group's matches; they cannot produce any."""
+    with pytest.raises(ConfigError) as excinfo:
+        config_from(
+            {"search_groups": [{"name": "tooling", "exclude_matches": ["anything"]}]},
+            tmp_path,
+        )
+    assert excinfo.value.field == "search_groups[0].patterns"
+
+
+def test_exclusions_compile_with_the_groups_case_flag():
+    from brandscan.config.model import SearchGroup
+
+    insensitive = SearchGroup(name="a", exclude_matches=["contoso"])
+    sensitive = SearchGroup(name="b", exclude_matches=["contoso"], case_sensitive=True)
+    assert insensitive.compiled_exclusions()[0].search("CONTOSO")
+    assert sensitive.compiled_exclusions()[0].search("CONTOSO") is None
 
 
 # --- Colour notations -----------------------------------------------------

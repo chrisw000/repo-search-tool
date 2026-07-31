@@ -144,15 +144,203 @@ def test_font_family_declaration(tmp_path: Path):
 
 
 def test_embedded_font_file_reference(tmp_path: Path):
+    """A font asset is reported. Which group it lands in is the next test's job."""
     write(tmp_path, "site.css", "src: url('/fonts/cs-regular.woff2');\n")
     result = scan_text(tmp_path, default_scope(), groups())
-    assert "font-references" in matched_groups(result.findings, "site.css")
+    assert [f.line for f in result.findings if f.path == "site.css"] == [1]
 
 
 def test_external_font_service_reference(tmp_path: Path):
     write(tmp_path, "index.html", '<link href="https://use.typekit.net/abc.css">\n')
     result = scan_text(tmp_path, default_scope(), groups())
-    assert "font-references" in matched_groups(result.findings, "index.html")
+    assert [f.line for f in result.findings if f.path == "index.html"] == [1]
+
+
+# --- Attributing a font asset to the brand --------------------------------
+
+
+def font_finding(findings, path: str, group: str):
+    return next((f for f in findings if f.path == path and f.matched == group), None)
+
+
+def test_font_file_named_after_a_brand_font_is_a_brand_finding(tmp_path: Path):
+    """One configured font attributes every spelling of the filename."""
+    for index, spelling in enumerate(
+        ["contoso-sans-regular.woff2", "ContosoSans-Regular.woff2", "contoso_sans.ttf"]
+    ):
+        write(tmp_path, f"s{index}.css", f"src: url('/fonts/{spelling}');\n")
+    result = scan_text(tmp_path, default_scope(), groups())
+
+    for index, spelling in enumerate(
+        ["contoso-sans-regular.woff2", "ContosoSans-Regular.woff2", "contoso_sans.ttf"]
+    ):
+        finding = font_finding(result.findings, f"s{index}.css", "font-references")
+        assert finding is not None, spelling
+        assert finding.severity is Severity.MEDIUM
+        # The excerpt names the asset that tied the reference to the brand.
+        assert spelling in finding.excerpt
+        # Reported once: never as both a brand finding and an inventory item.
+        assert font_finding(result.findings, f"s{index}.css", "unattributed-font-assets") is None
+
+
+def test_font_file_carrying_no_brand_font_name_is_unattributed(tmp_path: Path):
+    write(tmp_path, "site.css", "src: url('/fonts/webfont-regular.woff2');\n")
+    result = scan_text(tmp_path, default_scope(), groups())
+
+    inventory = font_finding(result.findings, "site.css", "unattributed-font-assets")
+    assert inventory is not None
+    assert inventory.severity is Severity.LOW
+    assert inventory.severity.weight < Severity.MEDIUM.weight
+    assert font_finding(result.findings, "site.css", "font-references") is None
+
+
+def test_service_link_naming_a_brand_font_attributes_to_the_brand(tmp_path: Path):
+    write(
+        tmp_path,
+        "index.html",
+        '<link href="https://fonts.googleapis.com/css?family=Contoso+Sans">\n',
+    )
+    result = scan_text(tmp_path, default_scope(), groups())
+
+    finding = font_finding(result.findings, "index.html", "font-references")
+    assert finding is not None
+    assert "family=Contoso+Sans" in finding.excerpt
+    assert font_finding(result.findings, "index.html", "unattributed-font-assets") is None
+
+
+def test_service_link_naming_no_brand_font_is_unattributed(tmp_path: Path):
+    write(
+        tmp_path,
+        "index.html",
+        '<link href="https://fonts.googleapis.com/css?family=Roboto">\n',
+    )
+    result = scan_text(tmp_path, default_scope(), groups())
+
+    assert font_finding(result.findings, "index.html", "unattributed-font-assets") is not None
+    assert font_finding(result.findings, "index.html", "font-references") is None
+
+
+def test_well_known_third_party_font_packages_are_not_inventoried(tmp_path: Path):
+    write(tmp_path, "a.css", "src: url('/fonts/glyphicons-halflings-regular.woff2');\n")
+    write(tmp_path, "b.css", "src: url('/fonts/fa-regular-400.eot');\n")
+    # A vendor-named asset that *does* carry a brand font is still a brand finding.
+    write(tmp_path, "c.css", "src: url('/fonts/fa-contoso-sans-400.woff2');\n")
+    result = scan_text(tmp_path, default_scope(), groups())
+
+    assert font_finding(result.findings, "a.css", "unattributed-font-assets") is None
+    assert font_finding(result.findings, "b.css", "unattributed-font-assets") is None
+    assert font_finding(result.findings, "c.css", "font-references") is not None
+
+
+def test_with_no_brand_fonts_every_font_asset_is_unattributed(tmp_path: Path):
+    seeded = seed_default_groups(**{**VOCABULARY, "fonts": []})
+    # The attributed group has no patterns at all, so nothing can attribute.
+    assert next((g for g in seeded if g.name == "font-references")).patterns == []
+
+    write(tmp_path, "site.css", "src: url('/fonts/contoso-sans-regular.woff2');\n")
+    result = scan_text(tmp_path, default_scope(), seeded)
+    assert font_finding(result.findings, "site.css", "unattributed-font-assets") is not None
+
+
+# --- Match-text exclusions ------------------------------------------------
+
+
+def test_a_match_its_group_excludes_by_text_produces_no_finding(tmp_path: Path):
+    group = SearchGroup(
+        name="tooling",
+        patterns=[r"contoso-\w+"],
+        exclude_matches=[r"contoso-sample"],
+    )
+    write(tmp_path, "a.yml", "run: contoso-sample --now\n")
+    result = scan_text(tmp_path, default_scope(), [group])
+    assert result.findings == []
+
+
+def test_one_excluded_match_does_not_suppress_another_on_the_same_line(tmp_path: Path):
+    group = SearchGroup(
+        name="tooling",
+        patterns=[r"contoso-\w+"],
+        exclude_matches=[r"contoso-sample"],
+    )
+    write(tmp_path, "a.yml", "run: contoso-sample then contoso-deploy\n")
+    result = scan_text(tmp_path, default_scope(), [group])
+    assert [f.excerpt for f in result.findings] == ["contoso-deploy"]
+
+
+def test_a_vetoed_match_does_not_stop_a_later_pattern_in_the_group(tmp_path: Path):
+    """The pattern loop continues past a veto rather than breaking out of it."""
+    group = SearchGroup(
+        name="tooling",
+        patterns=[r"contoso-sample", r"contoso-deploy"],
+        exclude_matches=[r"contoso-sample"],
+    )
+    write(tmp_path, "a.yml", "run: contoso-sample then contoso-deploy\n")
+    result = scan_text(tmp_path, default_scope(), [group])
+    assert [f.excerpt for f in result.findings] == ["contoso-deploy"]
+
+
+def test_exclusions_are_local_to_the_group_that_declares_them(tmp_path: Path):
+    quiet = SearchGroup(
+        name="quiet", patterns=[r"Contoso"], exclude_matches=[r"Contoso"]
+    )
+    loud = SearchGroup(name="loud", patterns=[r"Contoso"])
+    write(tmp_path, "a.md", "Contoso\n")
+    result = scan_text(tmp_path, default_scope(), [quiet, loud])
+    assert matched_groups(result.findings) == {"loud"}
+
+
+def configured_groups(overrides: dict, tmp_path: Path):
+    """Seeded groups as configuration leaves them — the operator's own lever."""
+    from brandscan.config.loader import validate_config
+
+    config = validate_config(
+        {"brand": {k: list(v) for k, v in VOCABULARY.items()}, **overrides},
+        base_dir=tmp_path,
+        require_repository_source=False,
+    )
+    return config.search_groups
+
+
+def test_clearing_the_seeded_exclusions_restores_the_full_inventory(tmp_path: Path):
+    write(tmp_path, "a.css", "src: url('/fonts/glyphicons-halflings-regular.woff2');\n")
+    groups_with = configured_groups(
+        {"search_groups": [{"name": "unattributed-font-assets", "exclude_matches": []}]},
+        tmp_path,
+    )
+    result = scan_text(tmp_path, default_scope(), groups_with)
+    assert font_finding(result.findings, "a.css", "unattributed-font-assets") is not None
+
+
+def test_disabling_the_inventory_group_leaves_brand_references_reported(tmp_path: Path):
+    write(tmp_path, "a.css", "src: url('/fonts/webfont-regular.woff2');\n")
+    write(tmp_path, "b.css", "src: url('/fonts/contoso-sans-regular.woff2');\n")
+    groups_without = configured_groups(
+        {"disable_search_groups": ["unattributed-font-assets"]}, tmp_path
+    )
+    result = scan_text(tmp_path, default_scope(), groups_without)
+
+    assert "unattributed-font-assets" not in matched_groups(result.findings)
+    assert font_finding(result.findings, "b.css", "font-references") is not None
+
+
+def test_exclusion_case_sensitivity_follows_the_group(tmp_path: Path):
+    write(tmp_path, "a.md", "CONTOSO-SAMPLE\n")
+
+    insensitive = SearchGroup(
+        name="insensitive",
+        patterns=[r"contoso-\w+"],
+        exclude_matches=[r"contoso-sample"],
+    )
+    sensitive = SearchGroup(
+        name="sensitive",
+        patterns=[r"CONTOSO-\w+"],
+        exclude_matches=[r"contoso-sample"],
+        case_sensitive=True,
+    )
+    result = scan_text(tmp_path, default_scope(), [insensitive, sensitive])
+    # The insensitive group vetoes on a case-only difference; the sensitive one
+    # does not, so its finding survives.
+    assert matched_groups(result.findings) == {"sensitive"}
 
 
 def test_legacy_domain_and_url(tmp_path: Path):

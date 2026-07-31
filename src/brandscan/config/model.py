@@ -162,6 +162,7 @@ class SearchGroup:
     colors: list[str] = field(default_factory=list)
     include: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
+    exclude_matches: list[str] = field(default_factory=list)
     severity: Severity = Severity.MEDIUM
     description: str = ""
     remediation: str = ""
@@ -174,6 +175,17 @@ class SearchGroup:
         for colour in self.colors:
             sources.extend(colour_notation_patterns(colour))
         return [re.compile(p, flags) for p in sources]
+
+    def compiled_exclusions(self) -> list[re.Pattern[str]]:
+        """Expressions that veto a match by the text that matched.
+
+        `exclude` selects *files*; this selects *matches*, which is the only way
+        to say "not this string" without rewriting a group's patterns wholesale.
+        Compiled with the group's own case flag, so an exclusion behaves like
+        the patterns it narrows rather than as a second, subtly different rule.
+        """
+        flags = 0 if self.case_sensitive else re.IGNORECASE
+        return [re.compile(p, flags) for p in self.exclude_matches]
 
 
 @dataclass(frozen=True)

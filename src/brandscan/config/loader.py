@@ -218,6 +218,10 @@ def _apply_group_overrides(
             group.include = _string_list(raw["include"], f"{field}.include")
         if "exclude" in raw:
             group.exclude = _string_list(raw["exclude"], f"{field}.exclude")
+        if "exclude_matches" in raw:
+            group.exclude_matches = _string_list(
+                raw["exclude_matches"], f"{field}.exclude_matches"
+            )
         if "severity" in raw:
             group.severity = _parse_severity(raw["severity"], f"{field}.severity")
         for prose in ("description", "remediation"):
@@ -249,14 +253,15 @@ def _validate_patterns_compile(groups: list[SearchGroup]) -> None:
     import re
 
     for group in groups:
-        for pattern in group.patterns:
-            try:
-                re.compile(pattern)
-            except re.error as exc:
-                raise ConfigError(
-                    f"search_groups[{group.name}].patterns",
-                    f"invalid regular expression {pattern!r}: {exc}",
-                ) from exc
+        for attribute in ("patterns", "exclude_matches"):
+            for pattern in getattr(group, attribute):
+                try:
+                    re.compile(pattern)
+                except re.error as exc:
+                    raise ConfigError(
+                        f"search_groups[{group.name}].{attribute}",
+                        f"invalid regular expression {pattern!r}: {exc}",
+                    ) from exc
 
 
 def _parse_scope(raw: Any) -> ScanScope:
