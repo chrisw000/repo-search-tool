@@ -18,6 +18,12 @@ from pathlib import Path
 # the validation set; the value actually used is recorded in every report.
 DEFAULT_SIMILARITY_THRESHOLD = 10
 
+# Pixels below which a candidate carries no layout for a hash to describe. Not
+# fitted to a validation set the way the threshold above was: chosen to sit
+# above every spacer size (1x1, 8x8, 10x10) and below every icon size in real
+# use (16x16), which is the gap the default belongs in.
+DEFAULT_MIN_IMAGE_DIMENSION = 15
+
 
 @dataclass(frozen=True)
 class ConfidenceBand:
@@ -199,6 +205,30 @@ class ScanScope:
 
 
 @dataclass
+class ImageScope:
+    """Which decoded images are worth assessing at all.
+
+    Distinct from `ScanScope`, which decides what is *walked*: this gate acts
+    after a candidate has been read and decoded, on facts only the decoder
+    knows. `min_dimension` of 0 disables it, which is how a run reproduces the
+    behaviour of a scanner without a minimum.
+    """
+
+    min_dimension: int = DEFAULT_MIN_IMAGE_DIMENSION
+    always_examine: list[str] = field(default_factory=list)
+
+    def is_too_small(self, size: tuple[int, int]) -> bool:
+        """Whether a candidate's own dimensions rule it out.
+
+        Either dimension, not both and not area: a 600x1 rule is exactly as
+        unrecognisable as a 1x1, and an area test would admit it.
+        """
+        if self.min_dimension <= 0:
+            return False
+        return min(size) < self.min_dimension
+
+
+@dataclass
 class Config:
     """A whole scan definition, validated before any repository is acquired."""
 
@@ -210,6 +240,7 @@ class Config:
     similarity_threshold: int = DEFAULT_SIMILARITY_THRESHOLD
     threshold_was_defaulted: bool = True
     scope: ScanScope = field(default_factory=ScanScope)
+    image_scope: ImageScope = field(default_factory=ImageScope)
     output_dir: Path = Path("brandscan-output")
     source_path: Path | None = None
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from brandscan.config.model import ScanScope, SearchGroup, Severity
+from brandscan.config.model import ImageScope, ScanScope, SearchGroup, Severity
 
 # Third-party code. Its branding is not ours to change.
 DEFAULT_EXCLUDE_DIRS = [
@@ -93,12 +93,30 @@ STYLE_AND_MARKUP_GLOBS = [
 ]
 
 
+# The one class of brand asset that is legitimately tiny. At the default
+# minimum these clear it unaided — a favicon is 16x16 and the minimum is 15.
+# The exemption exists so the minimum stays tunable *upward*: raising it to 32
+# after a run turns up a pile of 20x20 sprite fragments would otherwise drop
+# every favicon in the estate in the same edit, silently, and a favicon is the
+# brand in the browser tab of every deployed site.
+DEFAULT_ALWAYS_EXAMINE_GLOBS = [
+    "favicon*",
+    "apple-touch-icon*",
+    "*.ico",
+    "*.cur",
+]
+
+
 def default_scope() -> ScanScope:
     return ScanScope(
         exclude_dirs=list(DEFAULT_EXCLUDE_DIRS),
         exclude_globs=list(DEFAULT_EXCLUDE_GLOBS),
         include_globs=[],
     )
+
+
+def default_image_scope() -> ImageScope:
+    return ImageScope(always_examine=list(DEFAULT_ALWAYS_EXAMINE_GLOBS))
 
 
 def flexible_name_pattern(name: str) -> str:

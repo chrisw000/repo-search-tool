@@ -10,12 +10,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from brandscan.config.model import ScanScope, Severity
+from brandscan.config.model import ImageScope, ScanScope, Severity
 from brandscan.findings import Finding, MatchType, ScanIssue, UnreadableCause
-from brandscan.images.loader import ImageLoadError, is_image_path, open_image, open_image_bytes
+from brandscan.images.loader import (
+    ImageBelowMinimum,
+    ImageLoadError,
+    is_image_path,
+    open_image,
+    open_image_bytes,
+)
 from brandscan.images.strategy import MatchStrategy
 from brandscan.scan.embedded import EmbeddedImage
-from brandscan.scan.walker import FileWalker
+from brandscan.scan.walker import FileWalker, matches_any
 
 IMAGE_SEVERITY = Severity.HIGH
 
@@ -37,6 +43,10 @@ class ImageScanResult:
     findings: list[Finding] = field(default_factory=list)
     issues: list[ScanIssue] = field(default_factory=list)
     images_examined: int = 0
+    # Counted, never listed. A repository can hold thousands of spacers, and
+    # enumerating them reinstates in the report the noise the minimum removes
+    # from the findings.
+    images_below_minimum: int = 0
 
 
 def _findings_for(
@@ -67,6 +77,7 @@ def scan_images(
     scope: ScanScope,
     strategy: MatchStrategy,
     embedded: list[EmbeddedImage] | None = None,
+    image_scope: ImageScope | None = None,
 ) -> ImageScanResult:
     """Match every image in a repository, including inlined ones.
 
@@ -77,10 +88,25 @@ def scan_images(
     An input the loader rejected for any reason — including one a lenient
     decoder accepted but which rendered nothing — is an issue, never a count, so
     an unread file can never be presented as one that was read and found clean.
+    An input ruled out by `image_scope` is neither: it was read perfectly well
+    and never assessed, so it is counted separately in `images_below_minimum`.
     """
     result = ImageScanResult()
     if not strategy.ready:
         return result
+
+    gate = image_scope if image_scope is not None else ImageScope()
+
+    def minimum_for(relative_path: str) -> int:
+        """The effective minimum for one candidate.
+
+        The exemption is resolved here rather than in the loader because paths
+        are this layer's business and sizes are that one's. An exempted path
+        arrives at the loader as a minimum of 0.
+        """
+        if matches_any(relative_path, gate.always_examine):
+            return 0
+        return gate.min_dimension
 
     walker = FileWalker(root=root, scope=scope)
     for path in walker.iter_files():
@@ -88,7 +114,10 @@ def scan_images(
             continue
         relative = walker.relative(path)
         try:
-            image = open_image(path)
+            image = open_image(path, min_dimension=minimum_for(relative))
+        except ImageBelowMinimum:
+            result.images_below_minimum += 1
+            continue
         except ImageLoadError as exc:
             result.issues.append(
                 ScanIssue(path=relative, reason=exc.reason, cause=exc.cause)
@@ -110,7 +139,17 @@ def scan_images(
     for item in embedded or []:
         origin = f"{item.containing_path} line {item.line}"
         try:
-            image = open_image_bytes(item.data, item.subtype, origin=origin)
+            # A data URI has no path of its own, so the exemption is tested
+            # against the file it is inlined in — all there is to test.
+            image = open_image_bytes(
+                item.data,
+                item.subtype,
+                origin=origin,
+                min_dimension=minimum_for(item.containing_path),
+            )
+        except ImageBelowMinimum:
+            result.images_below_minimum += 1
+            continue
         except ImageLoadError as exc:
             result.issues.append(
                 ScanIssue(

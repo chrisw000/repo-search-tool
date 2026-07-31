@@ -13,11 +13,16 @@ from typing import Any
 
 import yaml
 
-from brandscan.config.defaults import default_scope, seed_default_groups
+from brandscan.config.defaults import (
+    default_image_scope,
+    default_scope,
+    seed_default_groups,
+)
 from brandscan.config.model import (
     DEFAULT_SIMILARITY_THRESHOLD,
     Config,
     ExternalRepo,
+    ImageScope,
     ScanScope,
     SearchGroup,
     Severity,
@@ -272,6 +277,30 @@ def _parse_scope(raw: Any) -> ScanScope:
     return scope
 
 
+def _parse_image_scope(raw: Any) -> ImageScope:
+    """The eligibility gate: how small is too small, and what is exempt.
+
+    An absent block takes the seeded defaults. An `always_examine` that is
+    present but empty exempts nothing — the operator asked for that, and a
+    present-but-empty list silently reinstating the seeded favicons would be a
+    configuration that does not do what it says.
+    """
+    entry = _require_mapping(raw, "image_scope")
+    image_scope = default_image_scope()
+    if "min_dimension" in entry:
+        value = entry["min_dimension"]
+        # `bool` is checked separately because it is an `int`: `true` would
+        # otherwise be admitted as a minimum of 1. See invariant 9.
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ConfigError("image_scope.min_dimension", "must be a non-negative integer")
+        image_scope.min_dimension = int(value)
+    if "always_examine" in entry:
+        image_scope.always_examine = _string_list(
+            entry["always_examine"], "image_scope.always_examine"
+        )
+    return image_scope
+
+
 def validate_config(
     data: dict[str, Any], base_dir: Path, require_repository_source: bool = True
 ) -> Config:
@@ -363,6 +392,7 @@ def validate_config(
         similarity_threshold=int(threshold),
         threshold_was_defaulted=threshold_was_defaulted,
         scope=_parse_scope(data.get("scope")),
+        image_scope=_parse_image_scope(data.get("image_scope")),
         output_dir=output_dir,
     )
 

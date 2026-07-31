@@ -7,10 +7,20 @@ from pathlib import Path
 import pytest
 import yaml
 
-from brandscan.config.defaults import BUILD_OUTPUT_DIRS_NOT_EXCLUDED, DEFAULT_EXCLUDE_DIRS
+from brandscan.config.defaults import (
+    BUILD_OUTPUT_DIRS_NOT_EXCLUDED,
+    DEFAULT_ALWAYS_EXAMINE_GLOBS,
+    DEFAULT_EXCLUDE_DIRS,
+)
 from brandscan.config.loader import ConfigError, load_config, validate_config
-from brandscan.config.model import DEFAULT_SIMILARITY_THRESHOLD, Severity, colour_notation_patterns
+from brandscan.config.model import (
+    DEFAULT_MIN_IMAGE_DIMENSION,
+    DEFAULT_SIMILARITY_THRESHOLD,
+    Severity,
+    colour_notation_patterns,
+)
 from brandscan.config.scalars import load_yaml
+from brandscan.scan.walker import matches_any
 
 BASE = {
     "targets": [{"host": "github.com", "org": "contoso"}],
@@ -301,6 +311,64 @@ def test_build_output_is_not_excluded_by_default(tmp_path: Path):
 def test_scope_defaults_are_overridable(tmp_path: Path):
     config = config_from({"scope": {"exclude_dirs": ["dist"]}}, tmp_path)
     assert config.scope.exclude_dirs == ["dist"]
+
+
+# --- Minimum candidate image size -----------------------------------------
+
+
+def test_minimum_image_size_defaults_and_seeds_the_favicon_exemptions(tmp_path: Path):
+    config = config_from({}, tmp_path)
+    assert config.image_scope.min_dimension == DEFAULT_MIN_IMAGE_DIMENSION
+    assert config.image_scope.always_examine == DEFAULT_ALWAYS_EXAMINE_GLOBS
+
+
+def test_a_raised_minimum_still_exempts_favicons_without_a_code_change(tmp_path: Path):
+    """The reason the exemption exists: at 15 it is inert, at 32 it is the only
+    thing keeping a 16x16 favicon assessable."""
+    config = config_from({"image_scope": {"min_dimension": 32}}, tmp_path)
+    assert config.image_scope.is_too_small((16, 16))
+    assert matches_any("static/favicon.png", config.image_scope.always_examine)
+
+
+def test_a_configured_minimum_replaces_the_default(tmp_path: Path):
+    config = config_from({"image_scope": {"min_dimension": 24}}, tmp_path)
+    assert config.image_scope.min_dimension == 24
+
+
+def test_a_zero_minimum_disables_the_gate(tmp_path: Path):
+    config = config_from({"image_scope": {"min_dimension": 0}}, tmp_path)
+    assert config.image_scope.min_dimension == 0
+    assert not config.image_scope.is_too_small((1, 1))
+
+
+@pytest.mark.parametrize(
+    "value", ["true", "-1", '"15"', "15.5"], ids=["boolean", "negative", "string", "float"]
+)
+def test_a_bad_minimum_dimension_is_named(value: str, tmp_path: Path):
+    """`true` is the same regression risk as the threshold's: a bool is an int,
+    so a careless check would admit it as a minimum of 1."""
+    with pytest.raises(ConfigError) as excinfo:
+        config_from_yaml(YAML_BASE + f"image_scope:\n  min_dimension: {value}\n", tmp_path)
+    assert excinfo.value.field == "image_scope.min_dimension"
+
+
+def test_configured_exemptions_replace_the_seeded_ones(tmp_path: Path):
+    config = config_from(
+        {"image_scope": {"always_examine": ["assets/sprites/*.png"]}}, tmp_path
+    )
+    assert config.image_scope.always_examine == ["assets/sprites/*.png"]
+
+
+def test_an_empty_exemption_list_exempts_nothing(tmp_path: Path):
+    config = config_from({"image_scope": {"always_examine": []}}, tmp_path)
+    assert config.image_scope.always_examine == []
+    assert not matches_any("favicon.ico", config.image_scope.always_examine)
+
+
+def test_a_non_string_exemption_is_named(tmp_path: Path):
+    with pytest.raises(ConfigError) as excinfo:
+        config_from({"image_scope": {"always_examine": [{"glob": "favicon*"}]}}, tmp_path)
+    assert excinfo.value.field == "image_scope.always_examine[0]"
 
 
 # --- Numeric scalars in string-valued positions ---------------------------
