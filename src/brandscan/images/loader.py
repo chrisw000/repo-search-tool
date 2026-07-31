@@ -4,10 +4,15 @@ Coverage spans raster formats, icon containers, vector images, and images
 recovered from base64 data URIs. Everything is returned as opened — never
 converted — because the trim that follows depends on seeing the original mode.
 
-This module is also the only place that decides *why* an input could not be
-read. The code that opened the file is the only code that knows; spreading that
+This module is also the only place that decides *why* an input was not matched.
+The code that opened the file is the only code that knows; spreading that
 inference to the callers would mean two places re-deriving it, and they would
 disagree the first time a new case appeared.
+
+There are two such whys, and they are different in kind. An input that could
+not be *read* raises `ImageLoadError` carrying a classified cause. An input
+read perfectly well and too small to carry a layout raises `ImageBelowMinimum`,
+which carries no cause because nothing about it is broken.
 """
 
 from __future__ import annotations
@@ -51,6 +56,25 @@ class ImageLoadError(Exception):
         self.cause = cause
 
 
+class ImageBelowMinimum(Exception):
+    """One image was read perfectly well and is too small to assess.
+
+    Deliberately *not* an `ImageLoadError`, and deliberately without an
+    `UnreadableCause`. Every member of that enum names something that went
+    wrong and carries a remediation for making the input assessable; a 1x1
+    spacer is not broken and no remedy applies to it. Given a cause it would
+    land in the report's unread section, which is the noise the minimum exists
+    to remove.
+    """
+
+    def __init__(self, size: tuple[int, int], minimum: int):
+        super().__init__(
+            f"image is {size[0]}x{size[1]}, below the {minimum}px minimum"
+        )
+        self.size = size
+        self.minimum = minimum
+
+
 def is_image_path(path: Path) -> bool:
     return path.suffix.lower() in IMAGE_SUFFIXES
 
@@ -90,14 +114,22 @@ def _decode(data: bytes, vector: bool, label: str) -> Image.Image:
     return image
 
 
-def _load(data: bytes, vector: bool, label: str, origin: str) -> Image.Image:
-    """Classify, then decode, then check the result carries content.
+def _load(
+    data: bytes, vector: bool, label: str, origin: str, min_dimension: int = 0
+) -> Image.Image:
+    """Classify, then decode, then size, then check the result carries content.
 
     The classification runs first so that a parser which would log about a file
     it cannot name is never reached. The blank check runs last and reuses
     `content_bbox` — the machinery that decides where to trim is the same
     machinery that decides whether there is anything to trim, so the two cannot
     drift apart.
+
+    The size gate sits between them, and the order is the decision rather than
+    an accident of statement order: a one-pixel transparent spacer trips both
+    tests, and *undersized* is the more specific and more useful account of it.
+    Reported as blank it would tell an operator to confirm whether it should
+    have held artwork; reported as undersized it needs no reply at all.
     """
     cause = classify_bytes(data, vector=vector)
     if cause is not None:
@@ -106,6 +138,9 @@ def _load(data: bytes, vector: bool, label: str, origin: str) -> Image.Image:
     with processing(origin):
         image = _decode(data, vector, label)
 
+    if min_dimension > 0 and min(image.size) < min_dimension:
+        raise ImageBelowMinimum(image.size, min_dimension)
+
     if content_bbox(image) is None:
         raise ImageLoadError(
             f"{label} decoded but rendered no content", UnreadableCause.RENDERED_BLANK
@@ -113,8 +148,13 @@ def _load(data: bytes, vector: bool, label: str, origin: str) -> Image.Image:
     return image
 
 
-def open_image(path: Path) -> Image.Image:
-    """Open an image file without altering its colour mode."""
+def open_image(path: Path, min_dimension: int = 0) -> Image.Image:
+    """Open an image file without altering its colour mode.
+
+    `min_dimension` is the *effective* minimum for this candidate, resolved by
+    the caller: this module knows sizes, not paths, so an exempted path arrives
+    here as a minimum of 0.
+    """
     try:
         data = path.read_bytes()
     except OSError as exc:
@@ -127,18 +167,23 @@ def open_image(path: Path) -> Image.Image:
         vector=path.suffix.lower() in VECTOR_SUFFIXES,
         label="image",
         origin=str(path),
+        min_dimension=min_dimension,
     )
 
 
-def open_image_bytes(data: bytes, subtype: str = "", origin: str = "") -> Image.Image:
+def open_image_bytes(
+    data: bytes, subtype: str = "", origin: str = "", min_dimension: int = 0
+) -> Image.Image:
     """Open an image recovered from a data URI.
 
     Classified exactly as a file on disk is: an inlined payload can be a
-    placeholder or a fragment of something that is not an image just as easily.
+    placeholder or a fragment of something that is not an image just as easily,
+    and it is ruled out by size on the same terms.
     """
     return _load(
         data,
         vector="svg" in subtype.lower(),
         label="embedded image",
         origin=origin or "embedded image",
+        min_dimension=min_dimension,
     )
