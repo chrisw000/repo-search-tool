@@ -73,8 +73,7 @@ below) recorded in
 except invariant 9, whose decisions live in
 `openspec/changes/archive/2026-07-31-accept-numeric-config-scalars/design.md`,
 and invariants 10–12, whose decisions live in
-`openspec/changes/enrich-executive-summary/design.md` — move that path when the
-change is archived.
+`openspec/changes/archive/2026-07-31-enrich-executive-summary/design.md`.
 
 1. **Trim before any colour-mode conversion** (`images/trim.py`, D2).
    Converting an opaque image to RGBA first gives it a full-frame alpha channel;
@@ -185,7 +184,7 @@ change is archived.
 
 ## Outstanding
 
-Nothing. All three changes are implemented and their behaviour is now recorded
+Nothing. All four changes are implemented and their behaviour is now recorded
 in `openspec/specs/` — six capability specs, the source of truth from here on.
 
 The scanner's own last open items (tasks 8.1, 8.3, 8.4) were verified against
@@ -201,15 +200,14 @@ string-valued config position is now built from the scalar's source text. Two
 requirements were added to `scan-configuration`. Verified against synthetic
 fixtures, including an end-to-end scan of a repository carrying `07654321`.
 
-`enrich-executive-summary` is **active, implemented, not yet archived**. It
-added invariants 10–12 above. The executive summary now carries each row's
-configured severity, expands search-group rows into the values that actually
-matched, bands image findings by likeness confidence, and is written as
-`executive-summary.html` alongside the Markdown and the JSON. Two requirements
-were added to `executive-summary` and one modified.
+`enrich-executive-summary` (archived 2026-07-31) added invariants 10–12 above.
+The executive summary now carries each row's configured severity, expands
+search-group rows into the values that actually matched, bands image findings
+by likeness confidence, and is written as `executive-summary.html` alongside
+the Markdown and the JSON. Two requirements were added to `executive-summary`
+and one modified. Verified against synthetic fixtures, and the rendered HTML
+was confirmed in a browser by the operator on 2026-07-31.
 
-Its one open item is task 8.3: the generated HTML has been verified
-structurally — every section present, every drill-through link resolving, no
-external reference, every band and severity naming itself in text — but has not
-yet been opened in a browser against a real run. Do that before archiving, then
-sync the deltas into `openspec/specs/` and update this file.
+All four changes are archived, so `openspec/changes/` holds only `archive/`
+and `openspec list` reports no active changes. The next piece of work starts
+with a new proposal.
