@@ -29,6 +29,7 @@ from brandscan.report.markdown import write_repo_report
 from brandscan.report.permalink import blob_permalink
 from brandscan.report.summary import counts_reconcile, totals, write_summary
 from brandscan.results import Provenance, RepoResult, RepoStatus
+from brandscan.run_record import RunRecord
 from brandscan.scan.image_search import scan_images
 from brandscan.scan.text import scan_text
 
@@ -154,6 +155,25 @@ def _outcome_for(result: RepoResult) -> str:
     }[result.status]
 
 
+def _open_run_record(config: Config, layout: OutputLayout, mode: str) -> RunRecord:
+    """Mark the run directory as holding a run in progress.
+
+    A run being continued keeps the identity it was given when it first
+    started; only its unfinished state is re-asserted, so that an interruption
+    of the resumed run leaves it resumable in turn.
+    """
+    record = RunRecord.load(layout.run_record_file) or RunRecord(
+        run_id=layout.run_id,
+        started_at=_now(),
+        tool_version=tool_version(),
+        mode=mode,
+        config_source=str(config.source_path) if config.source_path else None,
+    )
+    record.finished_at = None
+    record.write(layout.run_record_file)
+    return record
+
+
 def _verify_coverage(targets: list[RepoTarget], layout: OutputLayout) -> list[str]:
     """Confirm every target repository actually has a report on disk.
 
@@ -176,9 +196,11 @@ def execute_run(
     refresh: bool = False,
     limit: int | None = None,
     skip_preflight: bool = False,
+    mode: str = "both",
 ) -> RunOutcome:
     """Run a full scan and emit every artifact."""
     layout.bootstrap()
+    record = _open_run_record(config, layout, mode)
     outcome = RunOutcome()
 
     if config.targets and not skip_preflight:
@@ -215,6 +237,7 @@ def execute_run(
         references=len(config.reference_images),
         threshold=config.similarity_threshold,
         output=str(layout.root),
+        run=layout.run_id,
     )
 
     for target in targets:
@@ -297,6 +320,11 @@ def execute_run(
     # The Markdown stays the run's nominal summary; the HTML is the same
     # document for a reader, not a different artifact to point tooling at.
     outcome.summary_path = layout.summary_file
+
+    # Reaching here is what "finished" means: repositories that failed and
+    # run-level errors are results of a completed run, not an incomplete one.
+    record.finished_at = _now()
+    record.write(layout.run_record_file)
 
     info(
         "run finished",
