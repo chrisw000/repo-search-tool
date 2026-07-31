@@ -7,7 +7,7 @@ from pathlib import Path
 
 from brandscan.acquisition.models import RepoTarget
 from brandscan.config.model import Severity
-from brandscan.findings import Finding, MatchType, ScanIssue
+from brandscan.findings import Finding, MatchType, ScanIssue, UnreadableCause
 from brandscan.paths import OutputLayout
 from brandscan.report.markdown import render_repo_markdown, write_repo_report
 from brandscan.report.permalink import blob_permalink
@@ -190,6 +190,89 @@ def test_unreadable_files_are_surfaced_rather_than_swallowed():
     )
     assert "Files that could not be read" in markdown
     assert "a/broken.svg" in markdown
+    assert "unassessed rather than clean" in markdown
+
+
+def unread(path: str, cause: UnreadableCause) -> ScanIssue:
+    return ScanIssue(path=path, reason=f"image is {cause.value}", cause=cause)
+
+
+MIXED_ISSUES = [
+    unread("assets/logo.svg", UnreadableCause.EMPTY),
+    unread("assets/hero.png", UnreadableCause.VCS_POINTER),
+    unread("dist/img/mark.png", UnreadableCause.MALFORMED),
+]
+
+
+def test_unread_inputs_are_distinguished_by_cause_with_their_remedies():
+    """Three symptoms of the same shape and three unrelated remedies.
+
+    Presented as one flat list they read as one undifferentiated defect, which
+    is how a reader learns to skip the section.
+    """
+    markdown = render_repo_markdown(result(issues=MIXED_ISSUES))
+
+    for cause in (
+        UnreadableCause.EMPTY,
+        UnreadableCause.VCS_POINTER,
+        UnreadableCause.MALFORMED,
+    ):
+        assert f"### {cause.heading}" in markdown
+        assert cause.remediation in markdown
+
+    # Each remedy is a different instruction, not the same one three times.
+    assert "git lfs pull" in markdown
+    assert markdown.index("Content never fetched") != markdown.index("Empty placeholders")
+
+
+def test_the_sidecar_carries_the_same_classification(tmp_path: Path):
+    layout = OutputLayout(tmp_path)
+    written = result(issues=MIXED_ISSUES)
+    markdown_path = layout.report_markdown("github.com", "contoso", "widgets")
+    json_path = layout.report_json("github.com", "contoso", "widgets")
+    write_repo_report(written, markdown_path, json_path)
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    markdown = markdown_path.read_text(encoding="utf-8")
+
+    recorded = {entry["path"]: entry["cause"] for entry in payload["issues"]}
+    assert recorded == {issue.path: issue.cause.value for issue in MIXED_ISSUES}
+    # Neither form holds an unread input the other lacks.
+    for path in recorded:
+        assert path in markdown
+    assert markdown.count("- `") >= len(MIXED_ISSUES)
+
+
+def test_an_issue_survives_the_json_round_trip_with_its_cause():
+    issue = ScanIssue(
+        path="a/hero.png",
+        reason="image is a version-control pointer",
+        line=4,
+        cause=UnreadableCause.VCS_POINTER,
+    )
+    restored = ScanIssue.from_dict(issue.to_dict())
+    assert restored == issue
+    assert restored.cause is UnreadableCause.VCS_POINTER
+    assert restored.remediation == UnreadableCause.VCS_POINTER.remediation
+
+
+def test_an_issue_without_a_cause_still_round_trips():
+    issue = ScanIssue(path="a/b.png", reason="unclassified")
+    assert ScanIssue.from_dict(issue.to_dict()) == issue
+
+
+def test_a_clean_repository_with_unread_inputs_is_not_presented_as_verified():
+    markdown = render_repo_markdown(
+        result(status=RepoStatus.CLEAN, findings=[], issues=MIXED_ISSUES)
+    )
+    # Clean on findings...
+    assert "No text-pattern or image match was found in the content this scan" in markdown
+    # ...but never described as verified in full.
+    assert "scanned in full" not in markdown
+    assert "clean on findings, not verified in full" in markdown
+    assert "were **not** assessed" in markdown
+    for issue in MIXED_ISSUES:
+        assert issue.path in markdown
 
 
 def test_context_containing_a_fence_does_not_break_the_report():

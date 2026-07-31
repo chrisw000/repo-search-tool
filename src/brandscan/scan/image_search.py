@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from brandscan.config.model import ScanScope, Severity
-from brandscan.findings import Finding, MatchType, ScanIssue
+from brandscan.findings import Finding, MatchType, ScanIssue, UnreadableCause
 from brandscan.images.loader import ImageLoadError, is_image_path, open_image, open_image_bytes
 from brandscan.images.strategy import MatchStrategy
 from brandscan.scan.embedded import EmbeddedImage
@@ -72,6 +72,11 @@ def scan_images(
 
     Every decode is isolated: an undecodable file or an unrenderable vector is
     recorded as an issue and the remaining images are still matched.
+
+    `images_examined` counts only inputs that were read *and* carried content.
+    An input the loader rejected for any reason — including one a lenient
+    decoder accepted but which rendered nothing — is an issue, never a count, so
+    an unread file can never be presented as one that was read and found clean.
     """
     result = ImageScanResult()
     if not strategy.ready:
@@ -85,11 +90,17 @@ def scan_images(
         try:
             image = open_image(path)
         except ImageLoadError as exc:
-            result.issues.append(ScanIssue(path=relative, reason=str(exc)))
+            result.issues.append(
+                ScanIssue(path=relative, reason=exc.reason, cause=exc.cause)
+            )
             continue
         except Exception as exc:  # a decoder can fail in ways it does not declare
             result.issues.append(
-                ScanIssue(path=relative, reason=f"image could not be decoded: {exc}")
+                ScanIssue(
+                    path=relative,
+                    reason=f"image could not be decoded: {exc}",
+                    cause=UnreadableCause.MALFORMED,
+                )
             )
             continue
 
@@ -97,11 +108,17 @@ def scan_images(
         result.findings.extend(_findings_for(strategy, image, relative))
 
     for item in embedded or []:
+        origin = f"{item.containing_path} line {item.line}"
         try:
-            image = open_image_bytes(item.data, item.subtype)
+            image = open_image_bytes(item.data, item.subtype, origin=origin)
         except ImageLoadError as exc:
             result.issues.append(
-                ScanIssue(path=item.containing_path, reason=str(exc), line=item.line)
+                ScanIssue(
+                    path=item.containing_path,
+                    reason=exc.reason,
+                    line=item.line,
+                    cause=exc.cause,
+                )
             )
             continue
         except Exception as exc:
@@ -110,6 +127,7 @@ def scan_images(
                     path=item.containing_path,
                     reason=f"embedded image could not be decoded: {exc}",
                     line=item.line,
+                    cause=UnreadableCause.MALFORMED,
                 )
             )
             continue
