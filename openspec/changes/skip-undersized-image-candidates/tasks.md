@@ -60,32 +60,36 @@
 
 ## 4. Reporting what was ruled out
 
-- [ ] 4.1 Add `Provenance.min_image_dimension` and `RepoResult.images_below_minimum` in
+- [x] 4.1 Add `Provenance.min_image_dimension` and `RepoResult.images_below_minimum` in
   `results.py`, both through `to_dict`/`from_dict` so a resumed run rebuilds them
   from the sidecar (D7)
-- [ ] 4.2 Thread `config.image_scope` through `run.py` into the scan and into the
+- [x] 4.2 Thread `config.image_scope` through `run.py` into the scan and into the
   provenance
-- [ ] 4.3 Render the minimum and the ruled-out count in `report/markdown.py`'s
+- [x] 4.3 Render the minimum and the ruled-out count in `report/markdown.py`'s
   provenance body, beside *Images examined*
-- [ ] 4.4 Test: a report over a repository with undersized images states the count and
+- [x] 4.4 Test: a report over a repository with undersized images states the count and
   the minimum, and lists none of them individually — covers *Repository containing
   undersized images*
-- [ ] 4.5 Test: the Markdown and the JSON sidecar agree on both values — covers
+- [x] 4.5 Test: the Markdown and the JSON sidecar agree on both values — covers
   *Machine-readable form inspected*
-- [ ] 4.6 Test: a resumed run rebuilding a result from its sidecar preserves both
+- [x] 4.6 Test: a resumed run rebuilding a result from its sidecar preserves both
   values
-- [ ] 4.7 Confirm the executive summary and all three of its renderings need no edit
-  (invariant 10) — undersized candidates produce no findings to aggregate
+- [x] 4.7 Confirm the executive summary and all three of its renderings need no edit
+  (invariant 10) — undersized candidates produce no findings to aggregate.
+  Confirmed: `report/summary_model.py`, `summary.py` and `html.py` reference no
+  per-repository scan count at all, and the summary tests pass untouched
 
 ## 5. Documentation and validation
 
-- [ ] 5.1 Add the documented `image_scope` block to `config.example.yaml`, in the image
+- [x] 5.1 Add the documented `image_scope` block to `config.example.yaml`, in the image
   matching section beside `similarity_threshold`, explaining the minimum, the zero
   case, and why the favicon exemption exists
-- [ ] 5.2 Confirm `test_the_shipped_example_configuration_is_valid` passes against the
+- [x] 5.2 Confirm `test_the_shipped_example_configuration_is_valid` passes against the
   extended example
-- [ ] 5.3 Run `openspec validate --specs --strict` and the full suite; record the new
-  test count
+- [x] 5.3 Run `openspec validate --specs --strict` and the full suite; record the new
+  test count — 335 passing (295 before this change; 40 added), `openspec validate
+  --specs --strict` 7/7, `openspec validate skip-undersized-image-candidates
+  --strict` valid
 - [ ] 5.4 On archive: sync the deltas into `openspec/specs/`, add the eligibility-gate
   invariant to `CLAUDE.md` (size gates assessment, never matching; the gate precedes
   the blank check), and update its test count and Outstanding section

@@ -236,6 +236,22 @@ def _issues_body(result: RepoResult) -> list[str]:
     return lines
 
 
+def _minimum_size_lines(result: RepoResult) -> list[str]:
+    """What the size gate was set to, and what it cost.
+
+    Stated even when it cost nothing: `0` ruled out says every image in this
+    repository was assessed, which is a different claim from silence.
+    """
+    minimum = result.provenance.min_image_dimension
+    if minimum <= 0:
+        return ["- **Minimum image size:** none (every image assessed)"]
+    return [
+        f"- **Minimum image size:** {minimum}×{minimum} px",
+        f"- **Images below the minimum:** {result.images_below_minimum} "
+        "(read, too small to assess)",
+    ]
+
+
 def _provenance_body(result: RepoResult) -> list[str]:
     provenance = result.provenance
     threshold_note = " (default)" if provenance.threshold_was_defaulted else " (configured)"
@@ -254,6 +270,7 @@ def _provenance_body(result: RepoResult) -> list[str]:
         + (", ".join(f"`{label}`" for label in provenance.reference_labels) or "none"),
         f"- **Files scanned:** {result.files_scanned}",
         f"- **Images examined:** {result.images_examined}",
+        *_minimum_size_lines(result),
         "",
     ]
 

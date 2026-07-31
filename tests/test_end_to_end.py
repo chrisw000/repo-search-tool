@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from PIL import Image
 
 from brandscan.cli import main
 from brandscan.config.loader import validate_config
@@ -241,6 +242,42 @@ def test_findings_span_text_images_and_inlined_images(estate):
     assert any(f.get("embedded_in") == "dist/inline.css" for f in payload["findings"])
     # The dependency directory was not searched.
     assert not any(f["path"].startswith("node_modules/") for f in payload["findings"])
+
+
+def test_a_repository_full_of_spacers_reports_them_as_ruled_out(estate):
+    """The change end to end: the junk stops producing findings and stops
+    producing unread-input rows, the real assets are untouched, and the report
+    says how many were ruled out and under what rule."""
+    config, repos = estate
+    widgets = repos["widgets"]
+    spacers = widgets / "dist" / "img"
+    spacers.mkdir(parents=True, exist_ok=True)
+    for index in range(40):
+        Image.new("RGBA", (1, 1), (0, 0, 0, 0)).save(spacers / f"spacer-{index}.png")
+    Image.new("RGB", (8, 8), (255, 107, 0)).save(spacers / "bullet.png")
+    git(["add", "-A"], cwd=widgets)
+    git(["commit", "-m", "sprites"], cwd=widgets)
+
+    outcome, layout = run(config)
+
+    result = next(r for r in outcome.results if r.target.name == "widgets")
+    assert result.images_below_minimum == 41
+    assert result.provenance.min_image_dimension == 15
+
+    payload = json.loads(
+        layout.report_json(HOST, ORG, "widgets").read_text(encoding="utf-8")
+    )
+    assert payload["counts"]["images_below_minimum"] == 41
+    assert payload["provenance"]["min_image_dimension"] == 15
+    # Neither a finding nor an unread input: read perfectly well, never assessed.
+    assert not [f for f in payload["findings"] if "spacer" in f["path"]]
+    assert not [i for i in payload["issues"] if "spacer" in i["path"]]
+
+    markdown = layout.report_markdown(HOST, ORG, "widgets").read_text(encoding="utf-8")
+    assert "**Images below the minimum:** 41" in markdown
+    assert "spacer-0.png" not in markdown
+    # The real asset in the same directory is still found.
+    assert "dist/header.png" in markdown or "header.png" in markdown
 
 
 def test_permalinks_are_pinned_to_the_scanned_commit(estate):
