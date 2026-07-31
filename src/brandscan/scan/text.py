@@ -56,10 +56,35 @@ def _context_for(lines: list[str], index: int) -> list[str]:
     return [lines[i].rstrip() for i in range(start, end)]
 
 
+def first_surviving_match(line: str, patterns: list, exclusions: list) -> str:
+    """The first match on a line that no exclusion vetoes, or "".
+
+    A vetoed match must not end the search: it is skipped and the *next* match
+    considered, including one found by a later pattern in the same group. A line
+    carrying both a vendor font link and a brand one has to keep the brand one,
+    so the veto acts per match rather than per line.
+
+    Where a group declares no exclusions the loop keeps `search`, which stops at
+    the first match instead of enumerating every one on the line. That branch is
+    not tidiness: this runs over every line of every file of ~400 repositories.
+    """
+    for pattern in patterns:
+        if not exclusions:
+            match = pattern.search(line)
+            if match:
+                return match.group(0)[:MAX_EXCERPT_CHARS]
+            continue
+        for match in pattern.finditer(line):
+            text = match.group(0)
+            if not any(exclusion.search(text) for exclusion in exclusions):
+                return text[:MAX_EXCERPT_CHARS]
+    return ""
+
+
 def scan_file(
     relative_path: str,
     lines: list[str],
-    groups: list[tuple[SearchGroup, list]],
+    groups: list[tuple[SearchGroup, list, list]],
 ) -> list[Finding]:
     """Evaluate every in-scope group against one file's lines.
 
@@ -69,16 +94,11 @@ def scan_file(
     would inflate counts without telling a reader anything new.
     """
     findings: list[Finding] = []
-    for group, patterns in groups:
+    for group, patterns, exclusions in groups:
         if not group_covers(group, relative_path):
             continue
         for index, line in enumerate(lines):
-            excerpt = ""
-            for pattern in patterns:
-                match = pattern.search(line)
-                if match:
-                    excerpt = match.group(0)[:MAX_EXCERPT_CHARS]
-                    break
+            excerpt = first_surviving_match(line, patterns, exclusions)
             if not excerpt:
                 continue
             findings.append(
@@ -99,7 +119,10 @@ def scan_file(
 def scan_text(root: Path, scope: ScanScope, groups: list[SearchGroup]) -> TextScanResult:
     """Run every search-group across one repository."""
     result = TextScanResult()
-    compiled = [(group, group.compiled_patterns()) for group in groups]
+    compiled = [
+        (group, group.compiled_patterns(), group.compiled_exclusions())
+        for group in groups
+    ]
     walker = FileWalker(root=root, scope=scope)
 
     for path in walker.iter_files():

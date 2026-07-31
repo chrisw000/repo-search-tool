@@ -115,10 +115,10 @@ Copy-Item config.example.yaml config.yaml
 ```
 
 Then edit `config.yaml`. For a straightforward rebrand the only block you need
-to touch is `brand:` — the six default search-groups (brand names, font names,
-font references, legacy domains, brand colours, legal strings) are built from
-it. Adding a new class of brand reference is a configuration change, never a
-code change.
+to touch is `brand:` — the seven default search-groups (brand names, font names,
+brand-attributed font references, unattributed font assets, legacy domains,
+brand colours, legal strings) are built from it. Adding a new class of brand
+reference is a configuration change, never a code change.
 
 A company or VAT number can be written as a bare numeral — `07654321` — with no
 quoting. It is searched for exactly as you wrote it, leading zero included.
@@ -192,7 +192,9 @@ At step (c), check three things:
    `similarity_threshold`; if unrelated images are matching, lower it toward 5.
    Whatever you settle on is recorded in every report's provenance block.
 2. **Is the text noise tolerable?** Retune a group's `severity`, narrow its
-   `include` globs, or drop it via `disable_search_groups`.
+   `include` globs (which select *files*), veto a class of unwanted string with
+   `exclude_matches` (which selects *matches*), or drop the group via
+   `disable_search_groups`.
 3. **Does a per-repo `report.md` read as usable fix instructions?** That is the
    whole purpose of the tool — it is handed to an AI coding agent to perform the
    fixes — and it is the most expensive thing to discover late.

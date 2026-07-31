@@ -832,6 +832,69 @@ output_dir: {(tmp_path / "num-out").as_posix()}
     assert "2054353" not in excerpts
 
 
+def test_font_assets_reach_the_reports_in_the_right_rows(tmp_path: Path):
+    """The whole point of the split, read off the artifacts an operator opens.
+
+    A brand font file, two third-party package fonts, and a service link naming
+    no brand font — each has to land where it belongs, at the severity it
+    belongs at, all the way through to the executive summary.
+    """
+    work = tmp_path / "work"
+    repo = make_git_repo(
+        work / "storefront",
+        f"https://{HOST}/{ORG}/storefront.git",
+        {
+            "src/brand.css": "src: url('/fonts/contoso-sans-regular.woff2');\n",
+            "src/vendor.css": (
+                "src: url('/fonts/glyphicons-halflings-regular.woff2');\n"
+                "src: url('/fonts/fa-regular-400.eot');\n"
+            ),
+            "src/index.html": (
+                '<link href="https://fonts.googleapis.com/css?family=Roboto">\n'
+            ),
+        },
+    )
+
+    config = validate_config(
+        {
+            "brand": {"names": ["Contoso"], "fonts": ["Contoso Sans"]},
+            "external_repositories": [
+                {"host": HOST, "org": ORG, "name": "storefront", "path": str(repo)}
+            ],
+        },
+        base_dir=tmp_path,
+    )
+    config.output_dir = tmp_path / "font-out"
+    _, layout = run(config)
+
+    payload = json.loads(
+        layout.report_json(HOST, ORG, "storefront").read_text(encoding="utf-8")
+    )
+    rows = {(f["path"], f["matched"]): f["severity"] for f in payload["findings"]}
+
+    # The brand font file is a brand finding, at the attributed severity.
+    assert rows.get(("src/brand.css", "font-references")) == "medium"
+    assert ("src/brand.css", "unattributed-font-assets") not in rows
+
+    # The vendor package fonts are neither — the seeded denylist vetoed them.
+    assert not any(path == "src/vendor.css" for path, _ in rows)
+
+    # The service link naming no brand font is inventory, at the lower severity.
+    assert rows.get(("src/index.html", "unattributed-font-assets")) == "low"
+    assert ("src/index.html", "font-references") not in rows
+
+    # No renderer learned about fonts: the summary picked both groups up from
+    # the one model, and all three forms agree.
+    summary = json.loads(layout.summary_json_file.read_text(encoding="utf-8"))
+    assert summary["by_match"]["font-references"]["severity"] == "medium"
+    assert summary["by_match"]["unattributed-font-assets"]["severity"] == "low"
+    markdown = layout.summary_file.read_text(encoding="utf-8")
+    html = layout.summary_html_file.read_text(encoding="utf-8")
+    for name in ("font-references", "unattributed-font-assets"):
+        assert name in markdown
+        assert name in html
+
+
 def test_cli_mode_external_ignores_host_targets(estate, tmp_path: Path):
     config, _ = estate
     config_path = tmp_path / "config.yaml"
