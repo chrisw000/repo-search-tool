@@ -15,7 +15,13 @@ def draw_logo(
     foreground: tuple[int, int, int] = (15, 98, 254),
     accent: tuple[int, int, int] = (255, 107, 0),
 ) -> Image.Image:
-    """An asymmetric mark that survives resizing but is not confusable with noise."""
+    """The horizontal lockup: mark and wordmark side by side.
+
+    An asymmetric composition that survives resizing but is not confusable with
+    noise. Note that this scales its elements to whatever frame it is given, so
+    two calls at different sizes produce the *same* layout, not different ones —
+    use `draw_stacked_logo` when a genuinely different layout is needed.
+    """
     mode = "RGB" if background is not None else "RGBA"
     fill = background if background is not None else (0, 0, 0, 0)
     image = Image.new(mode, size, fill)
@@ -34,6 +40,45 @@ def draw_logo(
         [scaled(0.62, 0.75), scaled(0.74, 0.22), scaled(0.90, 0.75)], fill=highlight
     )
     draw.rectangle([scaled(0.62, 0.80), scaled(0.90, 0.88)], fill=solid)
+    return image
+
+
+def draw_stacked_logo(
+    size: tuple[int, int] = (120, 240),
+    background: tuple[int, int, int] | None = (255, 255, 255),
+    foreground: tuple[int, int, int] = (15, 98, 254),
+    accent: tuple[int, int, int] = (255, 107, 0),
+) -> Image.Image:
+    """The stacked lockup: mark above the wordmark, elements rearranged.
+
+    Genuinely a different *layout* from `draw_logo`, not the same one in a
+    taller frame. That distinction matters: hashing normalises every image onto
+    a fixed square grid, so proportions are discarded entirely and a merely
+    stretched copy is indistinguishable from its original. Only a real change
+    in where the elements sit produces a different signature.
+    """
+    mode = "RGB" if background is not None else "RGBA"
+    fill = background if background is not None else (0, 0, 0, 0)
+    image = Image.new(mode, size, fill)
+    draw = ImageDraw.Draw(image)
+    width, height = size
+
+    def scaled(x: float, y: float) -> tuple[int, int]:
+        return int(width * x), int(height * y)
+
+    solid = foreground if mode == "RGB" else (*foreground, 255)
+    highlight = accent if mode == "RGB" else (*accent, 255)
+
+    # Mark: a single centred device occupying the upper half.
+    draw.ellipse([scaled(0.28, 0.06), scaled(0.72, 0.40)], fill=solid)
+    draw.polygon(
+        [scaled(0.38, 0.36), scaled(0.50, 0.12), scaled(0.62, 0.36)], fill=highlight
+    )
+
+    # Wordmark: text-like bars stacked beneath it, ragged right.
+    draw.rectangle([scaled(0.12, 0.52), scaled(0.88, 0.62)], fill=solid)
+    draw.rectangle([scaled(0.12, 0.68), scaled(0.66, 0.78)], fill=solid)
+    draw.rectangle([scaled(0.12, 0.84), scaled(0.44, 0.94)], fill=highlight)
     return image
 
 
@@ -58,7 +103,7 @@ def reference_dir(tmp_path: Path) -> Path:
     directory = tmp_path / "references"
     directory.mkdir()
     draw_logo((240, 120)).save(directory / "logo-horizontal.png")
-    draw_logo((120, 240), foreground=(20, 20, 20)).save(directory / "logo-stacked.png")
+    draw_stacked_logo((120, 240)).save(directory / "logo-stacked.png")
     (directory / "labels.yaml").write_text(
         "logo-horizontal.png: horizontal-lockup\nlogo-stacked.png: stacked-lockup\n",
         encoding="utf-8",

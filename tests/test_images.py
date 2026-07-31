@@ -13,7 +13,7 @@ from brandscan.images.loader import ImageLoadError, open_image
 from brandscan.images.raster import rasterise_svg_bytes
 from brandscan.images.strategy import PerceptualHashStrategy
 from brandscan.images.trim import content_bbox, trim_to_content
-from tests.conftest import draw_logo, pad
+from tests.conftest import draw_logo, draw_stacked_logo, pad
 
 THRESHOLD = 10
 
@@ -121,6 +121,72 @@ def test_reformatted_copy_still_matches(tmp_path: Path):
     assert distance(open_image(as_png), open_image(as_jpeg)) <= THRESHOLD
 
 
+@pytest.mark.parametrize("fmt,suffix,kwargs", [
+    ("PNG", ".png", {}),
+    ("JPEG", ".jpg", {"quality": 75}),
+    ("GIF", ".gif", {}),
+    ("WEBP", ".webp", {}),
+    ("BMP", ".bmp", {}),
+    ("TIFF", ".tiff", {}),
+])
+def test_a_larger_differently_shaped_copy_matches_in_any_format(
+    tmp_path: Path, fmt: str, suffix: str, kwargs: dict
+):
+    """Reference trims to 200x100; candidate is bigger and not the same aspect.
+
+    A real asset is rarely a clean multiple of the reference: it sits on some
+    larger canvas at whatever proportions the designer used. Neither the size
+    difference nor the aspect difference may decide the match.
+    """
+    content = trim_to_content(draw_logo((800, 400))).convert("RGB")
+    reference = content.resize((200, 100), Image.Resampling.LANCZOS)
+
+    canvas = Image.new("RGB", (500, 500), (255, 255, 255))
+    canvas.paste(content.resize((400, 190), Image.Resampling.LANCZOS), (50, 155))
+
+    candidate_path = tmp_path / f"asset{suffix}"
+    canvas.save(candidate_path, format=fmt, **kwargs)
+
+    assert distance(reference, open_image(candidate_path)) <= THRESHOLD
+
+
+@pytest.mark.parametrize("height", [200, 190, 160, 133, 100, 80])
+def test_aspect_ratio_does_not_decide_the_match(height: int):
+    """Proportions are normalised away by the fixed hashing grid.
+
+    Worth pinning down explicitly: it is what lets a squashed or stretched copy
+    match, and equally why two layouts must differ in *arrangement* rather than
+    merely in proportions to be told apart.
+    """
+    content = trim_to_content(draw_logo((800, 400))).convert("RGB")
+    reference = content.resize((200, 100), Image.Resampling.LANCZOS)
+    candidate = content.resize((400, height), Image.Resampling.LANCZOS)
+    assert distance(reference, candidate) <= THRESHOLD
+
+
+def test_distinct_layouts_do_not_match_each_other():
+    """A horizontal lockup must not be reported as the stacked one.
+
+    Because proportions are discarded, layouts are distinguished only by where
+    their elements sit. This is the assertion that would fail if the two
+    reference fixtures were the same composition in different frames.
+    """
+    horizontal = draw_logo((240, 120))
+    stacked = draw_stacked_logo((120, 240))
+    assert distance(horizontal, stacked) > THRESHOLD * 2
+
+
+def test_each_layout_still_matches_its_own_variants():
+    """The separation above must not come at the cost of within-layout recall."""
+    stacked = draw_stacked_logo((120, 240))
+    for variant in (
+        draw_stacked_logo((400, 800)),
+        draw_stacked_logo((300, 300)),
+        draw_stacked_logo((120, 240), foreground=(200, 30, 30), accent=(20, 160, 90)),
+    ):
+        assert distance(stacked, variant) <= THRESHOLD
+
+
 def test_icon_container_is_readable(tmp_path: Path):
     icon = tmp_path / "favicon.ico"
     draw_logo((64, 64)).save(icon, sizes=[(64, 64)])
@@ -175,6 +241,23 @@ def test_matches_are_ordered_by_increasing_distance(reference_dir: Path):
     assert len(matches) == 2
     assert matches[0].label == "horizontal-lockup"
     assert matches[0].distance <= matches[1].distance
+    # The references are distinct layouts, so the ordering reflects a real gap
+    # rather than two near-identical images landing in an arbitrary order.
+    assert matches[1].distance - matches[0].distance > THRESHOLD
+
+
+def test_at_the_default_threshold_only_the_right_layout_matches(reference_dir: Path):
+    strategy = PerceptualHashStrategy(threshold=THRESHOLD)
+    strategy.prepare(
+        [
+            ReferenceImage(path=reference_dir / "logo-horizontal.png", label="horizontal-lockup"),
+            ReferenceImage(path=reference_dir / "logo-stacked.png", label="stacked-lockup"),
+        ]
+    )
+    assert [m.label for m in strategy.match(draw_logo((600, 300)))] == ["horizontal-lockup"]
+    assert [m.label for m in strategy.match(draw_stacked_logo((300, 600)))] == [
+        "stacked-lockup"
+    ]
 
 
 def test_candidate_outside_the_threshold_is_not_reported(reference_dir: Path):

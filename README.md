@@ -21,6 +21,38 @@ screenshot) is not detected, because the surrounding content dominates the
 signature. The matching strategy sits behind an interface so a sub-region
 strategy can be added without disturbing anything else.
 
+### What counts as a match
+
+Both images are trimmed to their content and resized onto a fixed 32×32 grid
+before hashing, so most of what varies between two copies of a logo is
+discarded before comparison. Measured distances against the default threshold
+of 10 (lower is closer):
+
+| Difference | Effect | Matches? |
+|---|---|---|
+| Filename and path | none | ✅ |
+| Pixel size, 48×24 up to 2400×1200 | distance 0–6 | ✅ |
+| Aspect ratio, even 2:1 vs 5:1 | distance 0–2 | ✅ |
+| Lossless re-encoding (PNG↔GIF↔BMP↔WEBP↔TIFF) | distance 0 | ✅ |
+| JPEG at q75–q95 | distance 0–6 | ✅ |
+| Recolouring | distance 0–4 | ✅ |
+| Transparent or solid padding | distance 0–2 | ✅ |
+| SVG rasterised against a raster twin | distance 6 | ✅ |
+| A different *layout* (stacked vs horizontal) | distance ~36 | ❌ correctly |
+| Unrelated image or noise | distance 30+ | ❌ correctly |
+| JPEG below ~q25 **and** small (<100px) | distance 14–30 | ⚠️ missed |
+
+Two consequences worth internalising:
+
+- **Proportions carry no information.** A squashed or stretched copy still
+  matches, which is what you want — but it also means two reference images
+  differ only if their elements are *arranged* differently. A stacked lockup
+  and a horizontal one qualify; the same lockup in a taller frame does not.
+- **Only loss of detail breaks matching.** Heavy JPEG compression on a small
+  image is the one realistic failure. If your estate has a lot of those,
+  consider a threshold nearer 15 — but check it against genuine non-matches
+  first, since those sit at 30+ and that is the headroom you are spending.
+
 ---
 
 ## 1. Prerequisites
