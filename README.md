@@ -120,6 +120,9 @@ font references, legacy domains, brand colours, legal strings) are built from
 it. Adding a new class of brand reference is a configuration change, never a
 code change.
 
+A company or VAT number can be written as a bare numeral — `07654321` — with no
+quoting. It is searched for exactly as you wrote it, leading zero included.
+
 You also need a folder of reference logos:
 
 ```

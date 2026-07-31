@@ -10,6 +10,7 @@ import yaml
 from brandscan.config.defaults import BUILD_OUTPUT_DIRS_NOT_EXCLUDED, DEFAULT_EXCLUDE_DIRS
 from brandscan.config.loader import ConfigError, load_config, validate_config
 from brandscan.config.model import DEFAULT_SIMILARITY_THRESHOLD, Severity, colour_notation_patterns
+from brandscan.config.scalars import load_yaml
 
 BASE = {
     "targets": [{"host": "github.com", "org": "contoso"}],
@@ -550,9 +551,12 @@ reference_images:
 
 def test_the_shipped_example_configuration_is_valid():
     example = Path(__file__).resolve().parents[1] / "config.example.yaml"
-    data = yaml.safe_load(example.read_text(encoding="utf-8"))
+    # Parsed through the real loader, not `yaml.safe_load`: the example shows an
+    # unquoted company number, and safe_load would silently reinterpret it.
+    data = load_yaml(example.read_text(encoding="utf-8"))
     # The example points at a reference folder that only exists once an
     # operator supplies their own logos, so validate the rest of it.
     data.pop("reference_images", None)
     config = validate_config(data, base_dir=example.parent)
     assert config.group("brand-names").severity is Severity.HIGH
+    assert "07654321" in config.group("legal-strings").patterns

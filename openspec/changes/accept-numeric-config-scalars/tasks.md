@@ -27,7 +27,7 @@ implementation.
 ## 3. Verification and documentation
 
 - [x] 3.1 Confirm by diff that every boolean and integer `isinstance` guard in `loader.py` is untouched (design D3). The `isinstance(..., str)` checks are expected to change — that is the change itself — but the type guards protecting `similarity_threshold`, `max_file_bytes`, `include_archived`, `include_forks`, and `case_sensitive` must not
-- [ ] 3.2 Run an end-to-end scan against a synthetic fixture repository containing the literal text `07654321`, confirming the finding is reported — the requirement is about what a scan finds, not only what validation accepts
-- [ ] 3.3 Update the example configuration and any config documentation to show a company number entered unquoted
-- [ ] 3.4 Run `openspec validate accept-numeric-config-scalars --strict`
-- [ ] 3.5 Tick each task above only once its verifying test passes, per the repository's working practice
+- [x] 3.2 Run an end-to-end scan against a synthetic fixture repository containing the literal text `07654321`, confirming the finding is reported — the requirement is about what a scan finds, not only what validation accepts
+- [x] 3.3 Update the example configuration and any config documentation to show a company number entered unquoted
+- [x] 3.4 Run `openspec validate accept-numeric-config-scalars --strict`
+- [x] 3.5 Tick each task above only once its verifying test passes, per the repository's working practice

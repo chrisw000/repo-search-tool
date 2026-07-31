@@ -66,6 +66,9 @@ brand:
   legal:
     - Contoso Limited
     - Contoso Holdings plc
+    # A company or VAT number needs no quoting: a bare numeral is searched for
+    # exactly as written here, leading zero and all.
+    - 07654321
 
 # Retune or extend the seeded groups here. A group named after a seeded one
 # overrides just the fields you give; any other name defines a new group, which
