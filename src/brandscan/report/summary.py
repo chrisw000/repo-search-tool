@@ -3,132 +3,68 @@
 Answers the three questions the owner of a rebrand actually asks: how much is
 there, where is it worst, and what kind of work is it. Its counts reconcile
 against the target set, so no repository can go silently unaccounted for.
+
+This module renders Markdown and the JSON sidecar from the computed model in
+`summary_model`; `html` renders the third form from the same model. None of the
+three aggregates anything itself.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from brandscan.config.model import Severity
-from brandscan.findings import MatchType
-from brandscan.results import RepoResult, RepoStatus
+from brandscan.config.model import Config, Severity
+from brandscan.report.summary_model import (
+    BAND_PREAMBLE,
+    MAX_VALUES_JSON,
+    MAX_VALUES_RENDERED,
+    MatchRow,
+    SummaryModel,
+    build_summary,
+    counts_reconcile,
+    display_value,
+    ranked,
+    totals,
+)
 
-MAX_RANKED = 200
+__all__ = [
+    "build_summary",
+    "counts_reconcile",
+    "ranked",
+    "render_summary",
+    "summary_dict",
+    "totals",
+    "write_summary",
+]
 
+def _cell(text: str) -> str:
+    """Repository content, made safe to put in a table cell.
 
-def totals(results: list[RepoResult]) -> dict[str, int]:
-    """Category counts that must sum to the size of the target set."""
-    counts = {
-        "targeted": len(results),
-        "scanned": 0,
-        "clean": 0,
-        "with_findings": 0,
-        "skipped": 0,
-        "failed": 0,
-        "findings": 0,
-    }
-    for result in results:
-        if result.status is RepoStatus.CLEAN:
-            counts["clean"] += 1
-            counts["scanned"] += 1
-        elif result.status is RepoStatus.FINDINGS:
-            counts["with_findings"] += 1
-            counts["scanned"] += 1
-        elif result.status is RepoStatus.SKIPPED:
-            counts["skipped"] += 1
-        else:
-            counts["failed"] += 1
-        counts["findings"] += len(result.findings)
-    return counts
-
-
-def counts_reconcile(counts: dict[str, int]) -> bool:
-    accounted = counts["clean"] + counts["with_findings"] + counts["skipped"] + counts["failed"]
-    return accounted == counts["targeted"]
-
-
-def ranked(results: list[RepoResult]) -> list[RepoResult]:
-    """Repositories with findings, heaviest remediation first.
-
-    Only repositories that actually have findings appear here; clean ones stay
-    in the totals rather than padding a triage list.
+    An excerpt is whatever matched a regex in someone's repository. An
+    unescaped pipe from a Markdown file silently breaks that row's columns —
+    wrong without looking wrong.
     """
-    with_findings = [r for r in results if r.status is RepoStatus.FINDINGS]
-    return sorted(
-        with_findings,
-        key=lambda r: (-r.remediation_weight, -len(r.findings), r.target.slug),
-    )
+    return text.replace("|", "\\|").replace("\n", " ").replace("\r", "")
 
 
-def by_match(results: list[RepoResult]) -> dict[str, dict[str, Any]]:
-    """Findings per search-group and per reference label, across all repos."""
-    breakdown: dict[str, dict[str, Any]] = {}
-    for result in results:
-        for finding in result.findings:
-            entry = breakdown.setdefault(
-                finding.matched,
-                {"kind": finding.match_type.value, "findings": 0, "repositories": set()},
-            )
-            entry["findings"] += 1
-            entry["repositories"].add(result.target.slug)
-    return breakdown
+def _code(text: str) -> str:
+    escaped = _cell(text)
+    # A backtick inside a code span closes it early; such a value goes bare.
+    return escaped if "`" in escaped else f"`{escaped}`"
 
 
-def by_severity(results: list[RepoResult]) -> dict[Severity, int]:
-    counts = {severity: 0 for severity in Severity.ordered()}
-    for result in results:
-        for finding in result.findings:
-            counts[finding.severity] += 1
-    return counts
-
-
-def summary_dict(results: list[RepoResult], run_errors: list[str]) -> dict[str, Any]:
-    counts = totals(results)
-    match_breakdown = {
-        name: {
-            "kind": entry["kind"],
-            "findings": entry["findings"],
-            "repositories": len(entry["repositories"]),
-        }
-        for name, entry in sorted(
-            by_match(results).items(), key=lambda item: -item[1]["findings"]
-        )
-    }
-    return {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "totals": counts,
-        "counts_reconcile": counts_reconcile(counts),
-        "by_match": match_breakdown,
-        "by_severity": {s.value: c for s, c in by_severity(results).items()},
-        "run_errors": list(run_errors),
-        "repositories": [
-            {
-                "slug": result.target.slug,
-                "status": result.status.value,
-                "findings": len(result.findings),
-                "remediation_weight": result.remediation_weight,
-                "reason": result.reason,
-                "report": result.report_path,
-            }
-            for result in results
-        ],
-    }
-
-
-def _severity_cells(result: RepoResult) -> str:
-    counts = result.counts_by_severity()
+def _severity_cells(counts: dict[Severity, int]) -> str:
     return " / ".join(str(counts[severity]) for severity in Severity.ordered())
 
 
-def render_summary(results: list[RepoResult], run_errors: list[str]) -> str:
-    counts = totals(results)
+def render_summary(model: SummaryModel) -> str:
+    counts = model.totals
     lines: list[str] = [
         "# Brand asset discovery — executive summary",
         "",
-        f"Generated {datetime.now(timezone.utc).isoformat(timespec='seconds')}",
+        f"Generated {model.generated_at}",
         "",
         "## Run totals",
         "",
@@ -145,7 +81,7 @@ def render_summary(results: list[RepoResult], run_errors: list[str]) -> str:
         "",
     ]
 
-    if counts_reconcile(counts):
+    if model.reconciles:
         lines += [
             "Clean + with findings + skipped + failed = "
             f"{counts['targeted']}, matching the target set. Every repository is "
@@ -159,9 +95,9 @@ def render_summary(results: list[RepoResult], run_errors: list[str]) -> str:
             "",
         ]
 
-    if run_errors:
+    if model.run_errors:
         lines += ["## Run-level errors", ""]
-        lines += [f"- {error}" for error in run_errors]
+        lines += [f"- {error}" for error in model.run_errors]
         lines += [
             "",
             "Repositories behind these errors were never enumerated and are not "
@@ -169,19 +105,18 @@ def render_summary(results: list[RepoResult], run_errors: list[str]) -> str:
             "",
         ]
 
-    lines += _ranking_section(results)
-    lines += _breakdown_sections(results)
-    lines += _not_scanned_section(results)
+    lines += _ranking_section(model)
+    lines += _breakdown_sections(model)
+    lines += _not_scanned_section(model)
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _ranking_section(results: list[RepoResult]) -> list[str]:
-    ordered = ranked(results)
+def _ranking_section(model: SummaryModel) -> list[str]:
     lines = [
         "## Remediation order",
         "",
     ]
-    if not ordered:
+    if not model.ranked:
         return lines + ["No repository has findings.", ""]
 
     lines += [
@@ -191,41 +126,39 @@ def _ranking_section(results: list[RepoResult]) -> list[str]:
         "| # | Repository | Weight | Findings | High / Med / Low | Report |",
         "| ---: | --- | ---: | ---: | --- | --- |",
     ]
-    for index, result in enumerate(ordered[:MAX_RANKED], start=1):
-        link = f"[report]({result.report_path})" if result.report_path else "—"
+    for index, entry in enumerate(model.ranked, start=1):
+        link = f"[report]({entry.report_path})" if entry.report_path else "—"
         lines.append(
-            f"| {index} | `{result.target.slug}` | {result.remediation_weight} | "
-            f"{len(result.findings)} | {_severity_cells(result)} | {link} |"
+            f"| {index} | `{entry.slug}` | {entry.weight} | "
+            f"{entry.findings} | {_severity_cells(entry.by_severity)} | {link} |"
         )
-    if len(ordered) > MAX_RANKED:
+    if model.ranked_omitted:
         lines.append(
-            f"| | _… {len(ordered) - MAX_RANKED} more, see executive-summary.json_ "
+            f"| | _… {model.ranked_omitted} more, see executive-summary.json_ "
             "| | | | |"
         )
     lines.append("")
     return lines
 
 
-def _breakdown_sections(results: list[RepoResult]) -> list[str]:
-    breakdown = by_match(results)
+def _breakdown_sections(model: SummaryModel) -> list[str]:
     lines = ["## Findings by search-group and reference label", ""]
-    if not breakdown:
+    if not model.by_match:
         lines += ["No findings.", ""]
     else:
         lines += [
-            "| Matched | Kind | Findings | Repositories |",
-            "| --- | --- | ---: | ---: |",
+            "| Matched | Kind | Severity | Findings | Repositories |",
+            "| --- | --- | --- | ---: | ---: |",
         ]
-        for name, entry in sorted(breakdown.items(), key=lambda item: -item[1]["findings"]):
-            kind = (
-                "reference label" if entry["kind"] == MatchType.IMAGE.value else "search-group"
-            )
+        for row in model.by_match:
             lines.append(
-                f"| `{name}` | {kind} | {entry['findings']} | {len(entry['repositories'])} |"
+                f"| {_code(row.matched)} | {row.kind_label} | {row.severity_label} | "
+                f"{row.findings} | {row.repositories} |"
             )
         lines.append("")
+        lines += _values_section(model)
+        lines += _bands_section(model)
 
-    severities = by_severity(results)
     lines += [
         "## Findings by severity",
         "",
@@ -233,14 +166,71 @@ def _breakdown_sections(results: list[RepoResult]) -> list[str]:
         "| --- | ---: |",
     ]
     for severity in Severity.ordered():
-        lines.append(f"| {severity.value} | {severities[severity]} |")
+        lines.append(f"| {severity.value} | {model.by_severity[severity]} |")
     lines.append("")
     return lines
 
 
-def _not_scanned_section(results: list[RepoResult]) -> list[str]:
-    not_scanned = [r for r in results if not r.status.was_scanned]
-    if not not_scanned:
+def _values_section(model: SummaryModel) -> list[str]:
+    if not model.has_value_rows:
+        return []
+    lines = [
+        "### What matched",
+        "",
+        "The distinct values each search-group found, most frequent first. A "
+        "case-insensitive group's spellings are counted as one value and shown "
+        "in the commonest of them.",
+        "",
+        "| Search-group | Severity | Value | Findings |",
+        "| --- | --- | --- | ---: |",
+    ]
+    for row in _text_rows(model):
+        shown, omitted = row.top_values(MAX_VALUES_RENDERED)
+        for value in shown:
+            lines.append(
+                f"| {_code(row.matched)} | {row.severity_label} | "
+                f"{_code(display_value(value.value))} | {value.findings} |"
+            )
+        if omitted:
+            lines.append(
+                f"| {_code(row.matched)} | {row.severity_label} | "
+                f"_… {omitted} more distinct value(s)_ | — |"
+            )
+    lines.append("")
+    return lines
+
+
+def _bands_section(model: SummaryModel) -> list[str]:
+    if not model.has_image_rows:
+        return []
+    lines = [
+        "### Likeness confidence",
+        "",
+        BAND_PREAMBLE.format(threshold=model.similarity_threshold),
+        "",
+        "| Reference label | Confidence | Distance | Findings |",
+        "| --- | --- | --- | ---: |",
+    ]
+    for row in _image_rows(model):
+        for entry in row.bands:
+            lines.append(
+                f"| {_code(row.matched)} | {entry.band.name} | "
+                f"{entry.band.range_text} | {entry.findings} |"
+            )
+    lines.append("")
+    return lines
+
+
+def _text_rows(model: SummaryModel) -> list[MatchRow]:
+    return [row for row in model.by_match if not row.is_image]
+
+
+def _image_rows(model: SummaryModel) -> list[MatchRow]:
+    return [row for row in model.by_match if row.is_image]
+
+
+def _not_scanned_section(model: SummaryModel) -> list[str]:
+    if not model.not_scanned:
         return []
     lines = [
         "## Not scanned",
@@ -251,22 +241,78 @@ def _not_scanned_section(results: list[RepoResult]) -> list[str]:
         "| Repository | Outcome | Reason | Report |",
         "| --- | --- | --- | --- |",
     ]
-    for result in sorted(not_scanned, key=lambda r: r.target.slug):
-        link = f"[report]({result.report_path})" if result.report_path else "—"
-        reason = result.reason.replace("|", "\\|") or "—"
+    for entry in model.not_scanned:
+        link = f"[report]({entry.report_path})" if entry.report_path else "—"
         lines.append(
-            f"| `{result.target.slug}` | {result.status.value} | {reason} | {link} |"
+            f"| `{entry.slug}` | {entry.status} | {_cell(entry.reason) or '—'} | {link} |"
         )
     lines.append("")
     return lines
 
 
+def summary_dict(model: SummaryModel) -> dict[str, Any]:
+    return {
+        "generated_at": model.generated_at,
+        "totals": dict(model.totals),
+        "counts_reconcile": model.reconciles,
+        "similarity_threshold": model.similarity_threshold,
+        "confidence_bands": [
+            {"name": band.name, "distance": band.range_text} for band in model.bands
+        ],
+        "by_match": {
+            row.matched: {
+                "kind": row.kind.value,
+                "findings": row.findings,
+                "repositories": row.repositories,
+                "severity": row.severity_label,
+                "values": [
+                    {"value": value.value, "findings": value.findings}
+                    for value in row.values[:MAX_VALUES_JSON]
+                ],
+                "values_omitted": max(0, len(row.values) - MAX_VALUES_JSON),
+                "bands": [
+                    {
+                        "name": entry.band.name,
+                        "distance": entry.band.range_text,
+                        "findings": entry.findings,
+                    }
+                    for entry in row.bands
+                ],
+            }
+            for row in model.by_match
+        },
+        "by_severity": {s.value: c for s, c in model.by_severity.items()},
+        "run_errors": list(model.run_errors),
+        "repositories": [
+            {
+                "slug": entry.slug,
+                "status": entry.status,
+                "findings": entry.findings,
+                "remediation_weight": entry.weight,
+                "reason": entry.reason,
+                "report": entry.report_path,
+            }
+            for entry in model.repositories
+        ],
+    }
+
+
 def write_summary(
-    results: list[RepoResult], run_errors: list[str], markdown_path: Path, json_path: Path
+    results: list,
+    run_errors: list[str],
+    config: Config,
+    markdown_path: Path,
+    json_path: Path,
+    html_path: Path,
 ) -> None:
+    """Write all three forms of the summary from one computed model."""
+    from brandscan.report.html import render_summary_html
+
+    model = build_summary(results, run_errors, config)
     markdown_path.parent.mkdir(parents=True, exist_ok=True)
-    markdown_path.write_text(render_summary(results, run_errors), encoding="utf-8")
+    markdown_path.write_text(render_summary(model), encoding="utf-8")
+    html_path.write_text(render_summary_html(model), encoding="utf-8")
     json_path.write_text(
-        json.dumps(summary_dict(results, run_errors), ensure_ascii=False, indent=2),
+        json.dumps(summary_dict(model), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )

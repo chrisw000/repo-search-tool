@@ -56,6 +56,11 @@ class OutputLayout:
     def summary_json_file(self) -> Path:
         return self.root / "executive-summary.json"
 
+    @property
+    def summary_html_file(self) -> Path:
+        """The browsable form. Always written, so no run is missing it."""
+        return self.root / "executive-summary.html"
+
     def repo_dir(self, host: str, org: str, name: str) -> Path:
         return (
             self.clones_dir / safe_segment(host) / safe_segment(org) / safe_segment(name)
