@@ -25,7 +25,7 @@ not the code.
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 
-# Tests — full suite is ~40s, currently 230 passing.
+# Tests — full suite is ~55s, currently 260 passing.
 .\.venv\Scripts\python.exe -m pytest -q
 
 # A single file while iterating.
@@ -58,7 +58,8 @@ src/brandscan/
   acquisition/      preflight, enumeration, clone/refresh, checkpoint, gh+git wrappers
   scan/             walker, text search, base64 extraction, image search driver
   images/           trim, hashing, SVG rasterisation, matching strategy seam
-  report/           per-repo markdown + JSON sidecar, permalinks, executive summary
+  report/           per-repo markdown + JSON sidecar, permalinks; summary_model
+                    computes the rollup, summary/html render it (plus the sidecar)
 tests/              mirrors the above; conftest.py builds synthetic logos and git repos
 openspec/specs/     the current behaviour contract — six capabilities, source of truth
 openspec/changes/   in-flight changes; archive/ holds the ones already folded into specs/
@@ -70,7 +71,10 @@ Do not "simplify" these away. Each encodes a decision (the `Dn` references
 below) recorded in
 `openspec/changes/archive/2026-07-31-brand-asset-discovery-scanner/design.md`,
 except invariant 9, whose decisions live in
-`openspec/changes/archive/2026-07-31-accept-numeric-config-scalars/design.md`.
+`openspec/changes/archive/2026-07-31-accept-numeric-config-scalars/design.md`,
+and invariants 10–12, whose decisions live in
+`openspec/changes/enrich-executive-summary/design.md` — move that path when the
+change is archived.
 
 1. **Trim before any colour-mode conversion** (`images/trim.py`, D2).
    Converting an opaque image to RGBA first gives it a full-frame alpha channel;
@@ -119,6 +123,27 @@ except invariant 9, whose decisions live in
    `isinstance(x, bool)` is false for it — `include_archived: true` would be
    rejected and `similarity_threshold: true` would be accepted as `1`. Do not
    "finish the job" by wrapping it.
+
+10. **One model behind all three summary renderings** (`report/summary_model.py`,
+    D1). Markdown, HTML and the JSON sidecar all render `SummaryModel`. No
+    renderer aggregates anything itself and none derives its content from
+    another's output, because the contract is that the forms agree — a reader
+    who opens the HTML must not be reading a different run from the one who
+    opens the Markdown. Adding a section means adding it to the model and to
+    each renderer, never computing it inside one of them.
+
+11. **Repository content is escaped on the way into a report** (D6). A matched
+    excerpt is whatever hit a regex in someone else's repository: `<script>` in
+    a template, a pipe in a Markdown file, a backtick in a shell script. HTML
+    escapes it; Markdown escapes the pipe. Unescaped, the row is wrong without
+    looking wrong.
+
+12. **Confidence bands are absolute in distance** (`config/model.py`, D2/D3).
+    "Very high" must mean the same thing in every run and on both hosts, so the
+    ladder is fixed in perceptual-hash distance rather than scaled to the
+    configured threshold. A band wholly beyond the threshold is omitted — it
+    could never hold a finding — but a reachable empty band is kept, because
+    `low: 0` at threshold 10 says every image match was a solid one.
 
 ## Working on this
 
@@ -176,6 +201,15 @@ string-valued config position is now built from the scalar's source text. Two
 requirements were added to `scan-configuration`. Verified against synthetic
 fixtures, including an end-to-end scan of a repository carrying `07654321`.
 
-All three changes are archived, so `openspec/changes/` holds only `archive/`
-and `openspec list` reports no active changes. The next piece of work starts
-with a new proposal.
+`enrich-executive-summary` is **active, implemented, not yet archived**. It
+added invariants 10–12 above. The executive summary now carries each row's
+configured severity, expands search-group rows into the values that actually
+matched, bands image findings by likeness confidence, and is written as
+`executive-summary.html` alongside the Markdown and the JSON. Two requirements
+were added to `executive-summary` and one modified.
+
+Its one open item is task 8.3: the generated HTML has been verified
+structurally — every section present, every drill-through link resolving, no
+external reference, every band and severity naming itself in text — but has not
+yet been opened in a browser against a real run. Do that before archiving, then
+sync the deltas into `openspec/specs/` and update this file.
