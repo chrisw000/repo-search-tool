@@ -317,6 +317,72 @@ def test_provenance_marks_a_configured_threshold_as_configured():
     assert "5 (configured)" in markdown
 
 
+def test_provenance_records_the_minimum_and_what_it_ruled_out():
+    markdown = render_repo_markdown(
+        result(
+            provenance=provenance(min_image_dimension=15),
+            images_examined=8,
+            images_below_minimum=2140,
+        )
+    )
+    assert "**Minimum image size:** 15×15 px" in markdown
+    assert "**Images below the minimum:** 2140" in markdown
+    assert "**Images examined:** 8" in markdown
+
+
+def test_images_ruled_out_by_size_are_counted_and_never_listed():
+    """The whole point of counting rather than listing: a per-file enumeration
+    of 2,140 spacers is the noise the minimum removes, in a different section."""
+    markdown = render_repo_markdown(
+        result(
+            status=RepoStatus.CLEAN,
+            findings=[],
+            provenance=provenance(min_image_dimension=15),
+            images_examined=0,
+            images_below_minimum=2140,
+        )
+    )
+    assert markdown.count("2140") == 1
+    # Not an unread input: it was read perfectly well, and nothing about it
+    # needs a remedy.
+    assert "unassessed" not in markdown
+    assert "spacer" not in markdown
+
+
+def test_a_disabled_minimum_says_so_rather_than_saying_nothing():
+    markdown = render_repo_markdown(result(provenance=provenance(min_image_dimension=0)))
+    assert "**Minimum image size:** none (every image assessed)" in markdown
+    assert "Images below the minimum" not in markdown
+
+
+def test_both_forms_agree_on_the_minimum_and_the_ruled_out_count(tmp_path: Path):
+    outcome = result(
+        provenance=provenance(min_image_dimension=15), images_below_minimum=17
+    )
+    markdown_path = tmp_path / "report.md"
+    json_path = tmp_path / "report.json"
+    write_repo_report(outcome, markdown_path, json_path)
+
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["provenance"]["min_image_dimension"] == 15
+    assert payload["counts"]["images_below_minimum"] == 17
+    markdown = markdown_path.read_text(encoding="utf-8")
+    assert "15×15 px" in markdown
+    assert "**Images below the minimum:** 17" in markdown
+
+
+def test_a_result_rebuilt_from_its_sidecar_keeps_the_minimum_and_the_count(tmp_path: Path):
+    """A resumed run accounts for completed repositories from their sidecars, so
+    anything absent from the round trip is lost from the summary of that run."""
+    outcome = result(
+        provenance=provenance(min_image_dimension=15), images_below_minimum=17
+    )
+    rebuilt = RepoResult.from_dict(outcome.to_dict(), target())
+
+    assert rebuilt.provenance.min_image_dimension == 15
+    assert rebuilt.images_below_minimum == 17
+
+
 # --- The two forms agree --------------------------------------------------
 
 

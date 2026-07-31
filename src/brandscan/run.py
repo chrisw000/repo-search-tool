@@ -57,6 +57,7 @@ def _provenance(config: Config, strategy: MatchStrategy, result: AcquisitionResu
         reference_labels=config.reference_labels,
         similarity_threshold=config.similarity_threshold,
         threshold_was_defaulted=config.threshold_was_defaulted,
+        min_image_dimension=config.image_scope.min_dimension,
         matching_strategy=strategy.name,
         commit_sha=result.commit_sha,
         branch=result.branch,
@@ -100,7 +101,11 @@ def scan_repository(
 
     text_result = scan_text(acquisition.path, config.scope, config.search_groups)
     image_result = scan_images(
-        acquisition.path, config.scope, strategy, text_result.embedded_images
+        acquisition.path,
+        config.scope,
+        strategy,
+        text_result.embedded_images,
+        image_scope=config.image_scope,
     )
 
     findings = text_result.findings + image_result.findings
@@ -118,6 +123,7 @@ def scan_repository(
         issues=issues,
         files_scanned=text_result.files_scanned,
         images_examined=image_result.images_examined,
+        images_below_minimum=image_result.images_below_minimum,
     )
 
 

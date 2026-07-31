@@ -41,6 +41,10 @@ class Provenance:
     reference_labels: list[str] = field(default_factory=list)
     similarity_threshold: int = 0
     threshold_was_defaulted: bool = True
+    # The size gate a run was taken under. Recorded for the same reason the
+    # threshold is: two reports that do not state it cannot be compared, because
+    # the count of images examined means something different under each.
+    min_image_dimension: int = 0
     matching_strategy: str = ""
     commit_sha: str | None = None
     branch: str | None = None
@@ -53,6 +57,7 @@ class Provenance:
             "reference_labels": list(self.reference_labels),
             "similarity_threshold": self.similarity_threshold,
             "threshold_source": "default" if self.threshold_was_defaulted else "configured",
+            "min_image_dimension": self.min_image_dimension,
             "matching_strategy": self.matching_strategy,
             "commit_sha": self.commit_sha,
             "branch": self.branch,
@@ -67,6 +72,7 @@ class Provenance:
             reference_labels=list(payload.get("reference_labels", [])),
             similarity_threshold=int(payload.get("similarity_threshold", 0)),
             threshold_was_defaulted=payload.get("threshold_source", "default") == "default",
+            min_image_dimension=int(payload.get("min_image_dimension", 0)),
             matching_strategy=payload.get("matching_strategy", ""),
             commit_sha=payload.get("commit_sha"),
             branch=payload.get("branch"),
@@ -85,6 +91,10 @@ class RepoResult:
     reason: str = ""
     files_scanned: int = 0
     images_examined: int = 0
+    # Read, never assessed: too small to carry a layout. Kept apart from both
+    # `images_examined` and `issues`, because it is neither a look that found
+    # nothing nor a file that could not be read.
+    images_below_minimum: int = 0
     report_path: str = ""
 
     @property
@@ -123,6 +133,7 @@ class RepoResult:
                 "findings": len(self.findings),
                 "files_scanned": self.files_scanned,
                 "images_examined": self.images_examined,
+                "images_below_minimum": self.images_below_minimum,
                 "by_severity": {
                     severity.value: count
                     for severity, count in self.counts_by_severity().items()
@@ -151,4 +162,5 @@ class RepoResult:
             reason=payload.get("reason", ""),
             files_scanned=int(counts.get("files_scanned", 0)),
             images_examined=int(counts.get("images_examined", 0)),
+            images_below_minimum=int(counts.get("images_below_minimum", 0)),
         )
