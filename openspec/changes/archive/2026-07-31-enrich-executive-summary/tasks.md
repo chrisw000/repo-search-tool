@@ -59,4 +59,4 @@
 
 - [x] 8.1 Update `CLAUDE.md`: the new test count, the third summary artifact in the layout, and an invariant covering the model-behind-three-renderings rule and the escaping of repository-derived content
 - [x] 8.2 Run `openspec validate --changes enrich-executive-summary --strict`
-- [ ] 8.3 Open the generated HTML in a browser against a real run and confirm the tables read well, the bands are distinguishable, and the drill-through links resolve — verified structurally (all sections present, every link resolves, no external reference, every band and severity named in text); needs the operator's eyes in a browser
+- [x] 8.3 Open the generated HTML in a browser against a real run and confirm the tables read well, the bands are distinguishable, and the drill-through links resolve — confirmed by the operator on 2026-07-31
