@@ -25,7 +25,7 @@ not the code.
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 
-# Tests — full suite is ~55s, currently 260 passing.
+# Tests — full suite is ~55s, currently 295 passing.
 .\.venv\Scripts\python.exe -m pytest -q
 
 # A single file while iterating.
@@ -51,7 +51,11 @@ src/brandscan/
   run.py            the orchestrator: acquire -> scan -> report -> roll up
   results.py        RepoResult / RepoStatus / Provenance
   findings.py       Finding and ScanIssue — the unit both searches produce
-  paths.py          output layout, namespaced host/org/repo
+  paths.py          output layout: shared root vs per-run directory, run
+                    naming, discovery and selection; namespaced host/org/repo
+  run_record.py     what a run directory says about itself, incl. whether the
+                    run finished — the basis for resuming one
+  atomic.py         write-temp-then-replace, shared by checkpoint and record
   logging_setup.py  JSONL run log and RunProgress counters
   config/           loader (field-named validation), model, seeded groups,
                     references, scalars (source-text-preserving YAML)
@@ -72,8 +76,10 @@ below) recorded in
 `openspec/changes/archive/2026-07-31-brand-asset-discovery-scanner/design.md`,
 except invariant 9, whose decisions live in
 `openspec/changes/archive/2026-07-31-accept-numeric-config-scalars/design.md`,
-and invariants 10–12, whose decisions live in
-`openspec/changes/archive/2026-07-31-enrich-executive-summary/design.md`.
+invariants 10–12, whose decisions live in
+`openspec/changes/archive/2026-07-31-enrich-executive-summary/design.md`, and
+invariants 13–14, whose decisions live in
+`openspec/changes/per-run-output-directories/design.md` (not yet archived).
 
 1. **Trim before any colour-mode conversion** (`images/trim.py`, D2).
    Converting an opaque image to RGBA first gives it a full-frame alpha channel;
@@ -144,6 +150,24 @@ and invariants 10–12, whose decisions live in
     could never hold a finding — but a reachable empty band is kept, because
     `low: 0` at threshold 10 says every image match was a solid one.
 
+13. **A run's artifacts are per-run; the clones are not** (`paths.py`, D1/D5).
+    Reports, all three summaries, the checkpoint, the log and the run record
+    hang off `run_dir`; only `clones_dir` hangs off `root`. The split is the
+    whole point of the change that introduced it — a finished run must survive
+    the next one, or there is nothing to compare against. The clones are
+    deliberately outside it: they are working copies rather than evidence, they
+    are the bulk of the tree, and invariant 4 draws the hard-reset boundary
+    around exactly one of them. What a run actually saw in a clone is pinned by
+    the `commit_sha` in its reports, which is what makes two runs comparable.
+
+14. **The run record carries no totals** (`run_record.py`, D3). It answers
+    *which run is this and did it finish* — the second half is what makes
+    resumption decidable at all. It must never grow a finding count or any
+    other rollup figure: that is invariant 10's problem restated, a second
+    statement of the same numbers computed at a different point in the run and
+    free to disagree with the summary. Cross-run comparison reads
+    `executive-summary.json`.
+
 ## Working on this
 
 - **The spec leads.** `openspec/specs/` is the current contract. For a behaviour
@@ -184,8 +208,16 @@ and invariants 10–12, whose decisions live in
 
 ## Outstanding
 
-Nothing. All four changes are implemented and their behaviour is now recorded
-in `openspec/specs/` — six capability specs, the source of truth from here on.
+`per-run-output-directories` is **implemented but not archived**, so its
+behaviour is not yet in `openspec/specs/` and `openspec list` reports it as
+active. Archiving it is the next step: sync `run-output-layout` (a seventh
+capability) and the modified `repository-acquisition` requirement, then update
+the invariant preamble above, which currently points at the live change
+directory. Everything in it was verified against synthetic fixtures; nobody has
+yet taken two runs over the real estate and compared them.
+
+The four changes before it are implemented and recorded in `openspec/specs/` —
+six capability specs, the source of truth from here on.
 
 The scanner's own last open items (tasks 8.1, 8.3, 8.4) were verified against
 the operator's real environment on 2026-07-31: the validation set was
@@ -208,6 +240,10 @@ the Markdown and the JSON. Two requirements were added to `executive-summary`
 and one modified. Verified against synthetic fixtures, and the rendered HTML
 was confirmed in a browser by the operator on 2026-07-31.
 
-All four changes are archived, so `openspec/changes/` holds only `archive/`
-and `openspec list` reports no active changes. The next piece of work starts
-with a new proposal.
+`per-run-output-directories` (implemented 2026-07-31) added invariants 13–14
+above. Every run now writes into its own `YYYY-MM-DD-HHMMSS-run` directory
+under the output root, so a re-run no longer overwrites the run before it;
+clones stay shared at the root. An unfinished run is continued by re-running
+the same command, a finished one is left alone in favour of a new run, and
+`--run-id` names one outright. One capability was added and one requirement in
+`repository-acquisition` modified.
