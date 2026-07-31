@@ -79,7 +79,7 @@ except invariant 9, whose decisions live in
 invariants 10–12, whose decisions live in
 `openspec/changes/archive/2026-07-31-enrich-executive-summary/design.md`, and
 invariants 13–14, whose decisions live in
-`openspec/changes/per-run-output-directories/design.md` (not yet archived).
+`openspec/changes/archive/2026-07-31-per-run-output-directories/design.md`.
 
 1. **Trim before any colour-mode conversion** (`images/trim.py`, D2).
    Converting an opaque image to RGBA first gives it a full-frame alpha channel;
@@ -208,16 +208,13 @@ invariants 13–14, whose decisions live in
 
 ## Outstanding
 
-`per-run-output-directories` is **implemented but not archived**, so its
-behaviour is not yet in `openspec/specs/` and `openspec list` reports it as
-active. Archiving it is the next step: sync `run-output-layout` (a seventh
-capability) and the modified `repository-acquisition` requirement, then update
-the invariant preamble above, which currently points at the live change
-directory. Everything in it was verified against synthetic fixtures; nobody has
-yet taken two runs over the real estate and compared them.
+Nothing blocking. All five changes are implemented and their behaviour is
+recorded in `openspec/specs/` — seven capability specs, the source of truth
+from here on.
 
-The four changes before it are implemented and recorded in `openspec/specs/` —
-six capability specs, the source of truth from here on.
+One thing is unverified against the real estate: nobody has yet taken two runs
+over the ~400 repositories and compared them. `per-run-output-directories` was
+verified against synthetic fixtures and a two-run smoke test only.
 
 The scanner's own last open items (tasks 8.1, 8.3, 8.4) were verified against
 the operator's real environment on 2026-07-31: the validation set was
@@ -240,10 +237,14 @@ the Markdown and the JSON. Two requirements were added to `executive-summary`
 and one modified. Verified against synthetic fixtures, and the rendered HTML
 was confirmed in a browser by the operator on 2026-07-31.
 
-`per-run-output-directories` (implemented 2026-07-31) added invariants 13–14
+`per-run-output-directories` (archived 2026-07-31) added invariants 13–14
 above. Every run now writes into its own `YYYY-MM-DD-HHMMSS-run` directory
 under the output root, so a re-run no longer overwrites the run before it;
 clones stay shared at the root. An unfinished run is continued by re-running
 the same command, a finished one is left alone in favour of a new run, and
-`--run-id` names one outright. One capability was added and one requirement in
-`repository-acquisition` modified.
+`--run-id` names one outright. The `run-output-layout` capability was added and
+one requirement in `repository-acquisition` modified.
+
+All five changes are archived, so `openspec/changes/` holds only `archive/`
+and `openspec list` reports no active changes. The next piece of work starts
+with a new proposal.
