@@ -33,6 +33,10 @@ class RepoTarget:
     fork: bool = False
     # Set for user-supplied clones; the tool must never modify this directory.
     external_path: Path | None = None
+    # Set when the repository was named explicitly but could not be resolved.
+    # Carried as a target rather than dropped, so it still reaches reporting as
+    # a failure instead of silently shrinking the target set.
+    acquisition_error: str = ""
 
     @property
     def slug(self) -> str:

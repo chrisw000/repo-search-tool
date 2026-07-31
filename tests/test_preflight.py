@@ -161,6 +161,132 @@ def test_an_unenumerable_organisation_does_not_end_the_run(monkeypatch):
     assert "ghes.example/platform" in errors[0]
 
 
+# --- Named repository selection -------------------------------------------
+
+
+def repo_payload(name, default_branch="main", **overrides):
+    return {
+        "name": name,
+        "default_branch": default_branch,
+        "clone_url": f"https://github.com/contoso/{name}.git",
+        **overrides,
+    }
+
+
+def named(monkeypatch, names, responses):
+    """Resolve a narrowed target against a stubbed per-repository API."""
+    calls: list[str] = []
+
+    def fake_api(host, endpoint, paginate=False):
+        calls.append(endpoint)
+        for needle, outcome in responses.items():
+            if endpoint.endswith(needle):
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+        raise CommandError(["gh", "api"], 1, "HTTP 404: Not Found")
+
+    monkeypatch.setattr(enumerate_repos, "gh_api_json", fake_api)
+    target = Target(host="github.com", org="contoso", repos=tuple(names))
+    return enumerate_repos.fetch_named_repos(target), calls
+
+
+def test_only_the_named_repositories_are_acquired(monkeypatch):
+    """And the organisation is never enumerated to get them."""
+    repos, calls = named(
+        monkeypatch,
+        ["legacy-webforms", "checkout-ui"],
+        {
+            "repos/contoso/legacy-webforms": repo_payload("legacy-webforms", "master"),
+            "repos/contoso/checkout-ui": repo_payload("checkout-ui"),
+        },
+    )
+
+    assert [r.name for r in repos] == ["legacy-webforms", "checkout-ui"]
+    assert all(not r.acquisition_error for r in repos)
+    # One direct call per repository, and no organisation listing at all.
+    assert calls == ["repos/contoso/legacy-webforms", "repos/contoso/checkout-ui"]
+    assert not any("orgs/" in call for call in calls)
+
+
+def test_a_named_repository_keeps_its_own_default_branch(monkeypatch):
+    repos, _ = named(
+        monkeypatch,
+        ["legacy-webforms"],
+        {"repos/contoso/legacy-webforms": repo_payload("legacy-webforms", "trunk")},
+    )
+    assert repos[0].default_branch == "trunk"
+
+
+def test_a_missing_named_repository_fails_rather_than_vanishing(monkeypatch):
+    """A trial that quietly scans 4 of 5 gives false confidence."""
+    repos, _ = named(
+        monkeypatch,
+        ["present", "typo-in-name", "also-present"],
+        {
+            "repos/contoso/present": repo_payload("present"),
+            "repos/contoso/also-present": repo_payload("also-present"),
+        },
+    )
+
+    assert [r.name for r in repos] == ["present", "typo-in-name", "also-present"]
+    failed = next(r for r in repos if r.name == "typo-in-name")
+    assert "could not be resolved" in failed.acquisition_error
+    assert "404" in failed.acquisition_error
+    # The others are unaffected.
+    assert all(not r.acquisition_error for r in repos if r.name != "typo-in-name")
+
+
+def test_an_explicitly_named_repository_is_acquired_even_when_archived(monkeypatch):
+    """Naming it is an explicit request, so the default filters do not apply."""
+    repos, _ = named(
+        monkeypatch,
+        ["retired", "a-fork"],
+        {
+            "repos/contoso/retired": repo_payload("retired", archived=True),
+            "repos/contoso/a-fork": repo_payload("a-fork", fork=True),
+        },
+    )
+    assert [r.name for r in repos] == ["retired", "a-fork"]
+    assert all(not r.acquisition_error for r in repos)
+
+
+def test_a_named_but_empty_repository_is_reported_as_a_failure(monkeypatch):
+    repos, _ = named(
+        monkeypatch,
+        ["empty"],
+        {"repos/contoso/empty": repo_payload("empty", default_branch="")},
+    )
+    assert "no default branch" in repos[0].acquisition_error
+
+
+def test_a_narrowed_target_skips_enumeration_entirely(monkeypatch):
+    from brandscan.config.model import Config
+
+    def fake_api(host, endpoint, paginate=False):
+        assert "orgs/" not in endpoint, "a narrowed target must not enumerate the org"
+        return repo_payload(endpoint.rsplit("/", 1)[-1])
+
+    monkeypatch.setattr(enumerate_repos, "gh_api_json", fake_api)
+    config = Config(
+        targets=[Target(host="github.com", org="contoso", repos=("one", "two"))]
+    )
+    targets, errors = enumerate_repos.enumerate_targets(config)
+    assert [t.name for t in targets] == ["one", "two"]
+    assert errors == []
+
+
+def test_an_unresolved_named_repository_becomes_a_failed_result(monkeypatch, tmp_path):
+    """The failure must survive all the way into acquisition, not just logging."""
+    from brandscan.acquisition.clone import acquire
+    from brandscan.acquisition.models import AcquisitionOutcome
+
+    repos, _ = named(monkeypatch, ["gone"], {})
+    result = acquire(repos[0], tmp_path / "managed")
+    assert result.outcome is AcquisitionOutcome.FAILED
+    assert "could not be resolved" in result.reason
+
+
 def test_the_api_default_branch_is_used_verbatim(monkeypatch):
     stub_api(
         monkeypatch,

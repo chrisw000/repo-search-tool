@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 from brandscan import TOOL_NAME, tool_version
@@ -11,7 +12,7 @@ from brandscan.acquisition.clone import normalise_remote
 from brandscan.acquisition.commands import CommandError, git_origin_url
 from brandscan.acquisition.preflight import PreflightError
 from brandscan.config.loader import ConfigError, load_config
-from brandscan.config.model import Config, ExternalRepo
+from brandscan.config.model import Config, ExternalRepo, Target
 from brandscan.logging_setup import configure_logging, info, warning
 from brandscan.paths import OutputLayout
 from brandscan.run import execute_run
@@ -52,6 +53,17 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "treat every immediate subdirectory of this path as an external "
             "clone, deriving its host and organisation from its origin remote"
+        ),
+    )
+    scan.add_argument(
+        "--repo",
+        action="append",
+        default=[],
+        metavar="HOST/ORG/NAME",
+        help=(
+            "scan only this repository; repeatable. Narrows a configured target "
+            "when given as ORG/NAME, or adds one outright as HOST/ORG/NAME. "
+            "Intended for trial runs over a chosen validation set."
         ),
     )
     scan.add_argument("--threshold", type=int, help="override the similarity threshold")
@@ -113,6 +125,59 @@ def _discover_external_root(root: Path) -> list[ExternalRepo]:
     return discovered
 
 
+def _apply_repo_selection(config: Config, selections: list[str]) -> None:
+    """Narrow the run to repositories named on the command line.
+
+    `ORG/NAME` narrows an existing configured target, so the host and its
+    options carry over. `HOST/ORG/NAME` is self-contained and adds a target
+    when none matches, which is what makes a trial run possible against a
+    config that otherwise names whole organisations.
+    """
+    if not selections:
+        return
+
+    wanted: dict[tuple[str | None, str], list[str]] = {}
+    for raw in selections:
+        parts = [part for part in raw.strip().strip("/").split("/") if part]
+        if len(parts) == 2:
+            host, org, name = None, parts[0], parts[1]
+        elif len(parts) == 3:
+            host, org, name = parts[0], parts[1], parts[2]
+        else:
+            raise ConfigError(
+                "--repo",
+                f"expected ORG/NAME or HOST/ORG/NAME (got {raw!r})",
+            )
+        wanted.setdefault((host, org), []).append(name)
+
+    narrowed: list[Target] = []
+    for (host, org), names in wanted.items():
+        match = next(
+            (
+                t
+                for t in config.targets
+                if t.org == org and (host is None or t.host == host)
+            ),
+            None,
+        )
+        if match is not None:
+            narrowed.append(replace(match, repos=tuple(names)))
+            continue
+        if host is None:
+            configured = ", ".join(sorted({t.label for t in config.targets})) or "none"
+            raise ConfigError(
+                "--repo",
+                f"no configured target for organisation {org!r}; give the host as "
+                f"HOST/{org}/NAME, or add the target to the config. "
+                f"Configured targets: {configured}",
+            )
+        narrowed.append(Target(host=host, org=org, repos=tuple(names)))
+
+    # Anything not named is out of scope for this run; that is the point.
+    config.targets = narrowed
+    config.external_repositories = []
+
+
 def _apply_mode(config: Config, mode: str) -> None:
     """Restrict the run to one acquisition posture."""
     if mode == MODE_MANAGED:
@@ -122,7 +187,15 @@ def _apply_mode(config: Config, mode: str) -> None:
 
 
 def _run_scan(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    # The command line can supply the repositories itself, so the file is not
+    # required to name any until those flags have been folded in.
+    config = load_config(
+        args.config,
+        require_repository_source=not (args.external_root or args.repo),
+    )
+
+    if args.repo:
+        _apply_repo_selection(config, args.repo)
 
     if args.external_root:
         config.external_repositories = list(config.external_repositories) + _discover_external_root(

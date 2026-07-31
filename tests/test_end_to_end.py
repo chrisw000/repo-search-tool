@@ -401,6 +401,100 @@ def test_cli_validate_config_does_not_acquire_anything(tmp_path: Path, capsys):
     assert "similarity threshold: 10 (default)" in out
 
 
+def test_cli_external_root_works_without_any_configured_target(estate, tmp_path: Path):
+    """The standalone form the README documents.
+
+    Validation used to run before the flag was applied, so a config naming no
+    targets was rejected before `--external-root` could supply any.
+    """
+    config, repos = estate
+    root = repos["widgets"].parent
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {"brand": {"names": ["Contoso"]}, "output_dir": str(tmp_path / "root-out")}
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["scan", "--config", str(config_path), "--external-root", str(root)])
+    assert exit_code in (0, 1)
+
+    layout = OutputLayout(root=tmp_path / "root-out")
+    assert layout.summary_file.is_file()
+    # Hosts and organisations were derived from each clone's own remote.
+    assert layout.report_markdown(HOST, ORG, "widgets").is_file()
+    assert layout.report_markdown(HOST, ORG, "pristine").is_file()
+
+
+def test_cli_repo_flag_narrows_a_configured_target(tmp_path: Path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "targets": [{"host": HOST, "org": ORG}],
+                "brand": {"names": ["Contoso"]},
+                "output_dir": str(tmp_path / "narrow-out"),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    from brandscan import run as run_module
+
+    captured = {}
+
+    def capture(config, layout, **kwargs):
+        captured["targets"] = list(config.targets)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(run_module, "execute_run", capture)
+    monkeypatch.setattr("brandscan.cli.execute_run", capture)
+
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "scan",
+                "--config",
+                str(config_path),
+                "--repo",
+                f"{ORG}/legacy-webforms",
+                "--repo",
+                f"{ORG}/checkout-ui",
+            ]
+        )
+
+    assert len(captured["targets"]) == 1
+    assert captured["targets"][0].repos == ("legacy-webforms", "checkout-ui")
+
+
+def test_cli_repo_flag_rejects_an_unknown_organisation(tmp_path: Path, capsys):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {"targets": [{"host": HOST, "org": ORG}], "brand": {"names": ["Contoso"]}}
+        ),
+        encoding="utf-8",
+    )
+    assert main(["scan", "--config", str(config_path), "--repo", "fabrikam/widgets"]) == 2
+    err = capsys.readouterr().err
+    assert "no configured target for organisation" in err
+    assert "github.com/contoso" in err
+
+
+def test_cli_repo_flag_rejects_a_malformed_selector(tmp_path: Path, capsys):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {"targets": [{"host": HOST, "org": ORG}], "brand": {"names": ["Contoso"]}}
+        ),
+        encoding="utf-8",
+    )
+    assert main(["scan", "--config", str(config_path), "--repo", "justaname"]) == 2
+    assert "ORG/NAME or HOST/ORG/NAME" in capsys.readouterr().err
+
+
 def test_cli_mode_external_ignores_host_targets(estate, tmp_path: Path):
     config, _ = estate
     config_path = tmp_path / "config.yaml"

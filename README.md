@@ -154,12 +154,33 @@ Work up in three steps rather than pointing it at 400 repositories cold.
 # a. Configuration only — validates and exits, acquires nothing.
 .\.venv\Scripts\brandscan.exe validate-config --config config.yaml
 
-# b. Auth preflight plus a handful of repositories.
-.\.venv\Scripts\brandscan.exe scan --config config.yaml --limit 5
+# b. Auth preflight plus a chosen handful of repositories.
+.\.venv\Scripts\brandscan.exe scan --config config.yaml `
+    --repo contoso/legacy-webforms `
+    --repo contoso/checkout-ui `
+    --repo contoso/brand-assets
 
 # c. Read what came out before scaling up.
 code .\brandscan-output\executive-summary.md
 ```
+
+**Choose the trial set deliberately.** Include at least one legacy repository
+whose default branch is not `main`, and one with checked-in build output —
+those are the cases most likely to hold stale branding and most likely to
+surface a problem with the tool. `--limit 5` exists, but it takes whichever
+five come first alphabetically, which is not a validation set.
+
+`--repo` is repeatable and takes `ORG/NAME` to narrow a configured target, or
+`HOST/ORG/NAME` to name one outright. The same subset can live in the config
+instead, as `repos:` under a target. Either way the named repositories are
+fetched directly rather than by paging through the organisation, and a name
+that does not resolve is reported as a failure rather than silently dropped —
+a trial that quietly scans four of five would be worse than useless.
+
+Note that a trial via `--external-root` instead exercises the *external* clone
+path, which is read-only. Your full run uses managed clones — shallow clone,
+fetch, hard reset, origin guard — so a trial that never touches that path
+leaves the riskier code untested.
 
 At step (c), check three things:
 
@@ -183,6 +204,7 @@ Useful flags:
 | Flag | Effect |
 |---|---|
 | `--mode managed\|external\|both` | which acquisition posture to use (default `both`) |
+| `--repo ORG/NAME` | scan only this repository; repeatable. `HOST/ORG/NAME` also accepted |
 | `--external-root <dir>` | treat each git repo under a folder as an external clone |
 | `--threshold N` | override the similarity threshold for this run |
 | `--limit N` | stop after N repositories |

@@ -21,6 +21,23 @@ targets:
   - host: github.enterprise.example
     org: platform
 
+    # Optional: name a subset instead of taking the whole organisation. Use it
+    # for a trial run, where the point is to pick representative repositories —
+    # a legacy one on a non-`main` branch, one with checked-in build output —
+    # rather than whatever the first few alphabetically happen to be.
+    #
+    # Named repositories are fetched directly, so this does not page through
+    # the organisation. They are also acquired even if archived or forks:
+    # naming one is an explicit request for it. A name that does not resolve is
+    # reported as a failure rather than quietly dropped.
+    #
+    # repos:
+    #   - legacy-webforms
+    #   - checkout-ui
+    #   - brand-assets
+    #
+    # The same thing without editing config: --repo contoso/legacy-webforms
+
 # Directories you already have locally. These are NEVER modified: a clean one
 # is scanned where it stands, a dirty one is skipped with the reason recorded.
 external_repositories: []

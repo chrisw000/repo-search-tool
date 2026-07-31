@@ -61,6 +61,71 @@ def test_no_source_of_repositories_is_named(tmp_path: Path):
     assert excinfo.value.field == "targets"
 
 
+def test_a_target_may_name_a_subset_of_repositories(tmp_path: Path):
+    config = validate_config(
+        {
+            **BASE,
+            "targets": [
+                {
+                    "host": "github.com",
+                    "org": "contoso",
+                    "repos": ["legacy-webforms", "checkout-ui"],
+                }
+            ],
+        },
+        base_dir=tmp_path,
+    )
+    target = config.targets[0]
+    assert target.repos == ("legacy-webforms", "checkout-ui")
+    assert target.is_narrowed
+
+
+def test_a_target_without_repos_is_not_narrowed(tmp_path: Path):
+    config = config_from({}, tmp_path)
+    assert config.targets[0].repos == ()
+    assert not config.targets[0].is_narrowed
+
+
+def test_a_qualified_repo_name_is_rejected_by_field(tmp_path: Path):
+    with pytest.raises(ConfigError) as excinfo:
+        validate_config(
+            {
+                **BASE,
+                "targets": [
+                    {"host": "github.com", "org": "contoso", "repos": ["contoso/widgets"]}
+                ],
+            },
+            base_dir=tmp_path,
+        )
+    assert excinfo.value.field == "targets[0].repos[0]"
+    assert "repository name only" in excinfo.value.message
+
+
+def test_a_duplicate_repo_name_is_rejected_by_field(tmp_path: Path):
+    with pytest.raises(ConfigError) as excinfo:
+        validate_config(
+            {
+                **BASE,
+                "targets": [
+                    {"host": "github.com", "org": "contoso", "repos": ["a", "a"]}
+                ],
+            },
+            base_dir=tmp_path,
+        )
+    assert excinfo.value.field == "targets[0].repos[1]"
+
+
+def test_a_repository_source_may_be_supplied_later(tmp_path: Path):
+    """`--external-root` and `--repo` arrive after the file is read."""
+    config = validate_config(
+        {"brand": {"names": ["Contoso"]}},
+        base_dir=tmp_path,
+        require_repository_source=False,
+    )
+    assert config.targets == []
+    assert config.external_repositories == []
+
+
 def test_valid_configuration_loads(tmp_path: Path):
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump(BASE), encoding="utf-8")

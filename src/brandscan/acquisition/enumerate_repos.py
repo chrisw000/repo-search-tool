@@ -60,6 +60,93 @@ def enumerate_org(target: Target) -> list[RepoTarget]:
     return repos
 
 
+def fetch_named_repos(target: Target) -> list[RepoTarget]:
+    """Resolve only the repositories a target names, one API call each.
+
+    Deliberately does not enumerate the organisation: against a 400-repository
+    org that is minutes of paging to then discard almost all of it, and a trial
+    run is exactly when a fast turnaround matters most.
+
+    A name that does not resolve comes back as a target carrying its own
+    failure, not as an omission. Quietly scanning four of five named
+    repositories would report a clean trial that never looked at the one that
+    mattered.
+    """
+    resolved: list[RepoTarget] = []
+    for name in target.repos:
+        try:
+            payload = gh_api_json(target.host, f"repos/{target.org}/{name}")
+        except CommandError as exc:
+            detail = exc.stderr or str(exc)
+            warning(
+                "named repository could not be resolved",
+                repository=f"{target.host}/{target.org}/{name}",
+                reason=detail,
+            )
+            resolved.append(
+                RepoTarget(
+                    host=target.host,
+                    org=target.org,
+                    name=name,
+                    default_branch="",
+                    clone_url="",
+                    acquisition_error=(
+                        f"named repository {target.org}/{name} could not be resolved "
+                        f"on {target.host}: {detail}"
+                    ),
+                )
+            )
+            continue
+
+        if not isinstance(payload, dict) or not payload.get("name"):
+            resolved.append(
+                RepoTarget(
+                    host=target.host,
+                    org=target.org,
+                    name=name,
+                    default_branch="",
+                    clone_url="",
+                    acquisition_error=(
+                        f"named repository {target.org}/{name} returned no usable "
+                        f"metadata from {target.host}"
+                    ),
+                )
+            )
+            continue
+
+        repo = _repo_from_api(target.host, target.org, payload)
+        if not repo.default_branch:
+            resolved.append(
+                RepoTarget(
+                    host=target.host,
+                    org=target.org,
+                    name=name,
+                    default_branch="",
+                    clone_url=repo.clone_url,
+                    acquisition_error=(
+                        f"named repository {target.org}/{name} has no default branch; "
+                        "it appears to be empty"
+                    ),
+                )
+            )
+            continue
+
+        # Archived and fork filters are not applied here. Naming a repository
+        # is an explicit request for it, and silently dropping it would be the
+        # same silent reduction the failures above exist to prevent.
+        resolved.append(repo)
+
+    info(
+        "named repositories resolved",
+        host=target.host,
+        org=target.org,
+        requested=len(target.repos),
+        resolved=sum(1 for r in resolved if not r.acquisition_error),
+        unresolved=sum(1 for r in resolved if r.acquisition_error),
+    )
+    return resolved
+
+
 def filter_repos(repos: list[RepoTarget], target: Target) -> list[RepoTarget]:
     """Apply the archived and fork inclusion flags, both off by default."""
     kept: list[RepoTarget] = []
@@ -120,6 +207,9 @@ def enumerate_targets(config: Config) -> tuple[list[RepoTarget], list[str]]:
     errors: list[str] = []
 
     for target in config.targets:
+        if target.is_narrowed:
+            targets.extend(fetch_named_repos(target))
+            continue
         try:
             repos = enumerate_org(target)
         except EnumerationError as exc:

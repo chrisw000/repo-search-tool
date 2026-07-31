@@ -47,6 +47,41 @@ The system SHALL accept multiple `{host, organisation}` targets and enumerate al
 - **WHEN** the configuration opts in to archived repositories
 - **THEN** archived repositories are enumerated as targets
 
+### Requirement: Named repository selection within a target
+
+A `{host, organisation}` target SHALL optionally name a subset of repositories to acquire. When a subset is named, the system SHALL acquire only those repositories and MUST NOT enumerate the rest of the organisation.
+
+Naming a repository is an explicit request for it, so a named repository SHALL be acquired even when it is archived or a fork and the corresponding inclusion option is off.
+
+A named repository that cannot be found or accessed SHALL be recorded as an acquisition failure against that repository. It MUST NOT silently reduce the target set, because a trial run that quietly scans four of five named repositories gives false confidence in the result.
+
+#### Scenario: A subset of an organisation is named
+
+- **WHEN** a target names a subset of repositories in its organisation
+- **THEN** only the named repositories are acquired and scanned
+- **AND** the rest of the organisation is not enumerated
+
+#### Scenario: No subset named
+
+- **WHEN** a target names no subset
+- **THEN** every repository in the organisation is enumerated as before
+
+#### Scenario: A named repository does not exist
+
+- **WHEN** a named repository cannot be found on its host
+- **THEN** it is recorded as an acquisition failure giving the reason
+- **AND** the other named repositories are still acquired and scanned
+
+#### Scenario: A named repository is archived
+
+- **WHEN** a named repository is archived and archived repositories are not otherwise included
+- **THEN** it is still acquired, because naming it is an explicit request for it
+
+#### Scenario: A named repository has an uncommon default branch
+
+- **WHEN** a named repository's default branch is not the most common default
+- **THEN** its actual default branch is resolved and scanned
+
 ### Requirement: Default branch resolution
 
 The system SHALL resolve each repository's actual default branch and scan that branch. The system MUST NOT assume any particular branch name.

@@ -89,12 +89,32 @@ def _parse_targets(raw: Any) -> list[Target]:
         for flag in ("include_archived", "include_forks"):
             if flag in entry and not isinstance(entry[flag], bool):
                 raise ConfigError(f"{field}.{flag}", "must be true or false")
+
+        names = _string_list(entry.get("repos"), f"{field}.repos")
+        cleaned: list[str] = []
+        for position, name in enumerate(names):
+            candidate = name.strip()
+            if not candidate:
+                raise ConfigError(f"{field}.repos[{position}]", "must not be empty")
+            if "/" in candidate:
+                raise ConfigError(
+                    f"{field}.repos[{position}]",
+                    f"must be a repository name only, not a path (got {candidate!r}); "
+                    "the organisation comes from this target's org field",
+                )
+            if candidate in cleaned:
+                raise ConfigError(
+                    f"{field}.repos[{position}]", f"duplicate repository {candidate!r}"
+                )
+            cleaned.append(candidate)
+
         targets.append(
             Target(
                 host=host.strip(),
                 org=org.strip(),
                 include_archived=bool(entry.get("include_archived", False)),
                 include_forks=bool(entry.get("include_forks", False)),
+                repos=tuple(cleaned),
             )
         )
     return targets
@@ -241,17 +261,24 @@ def _parse_scope(raw: Any) -> ScanScope:
     return scope
 
 
-def validate_config(data: dict[str, Any], base_dir: Path) -> Config:
+def validate_config(
+    data: dict[str, Any], base_dir: Path, require_repository_source: bool = True
+) -> Config:
     """Turn raw configuration data into a validated `Config`.
 
     Raises `ConfigError` naming the offending field on the first problem found.
+
+    `require_repository_source` is relaxed by callers that supply repositories
+    from the command line — `--external-root` and `--repo` — because those
+    arrive after the file has been read and would otherwise be rejected before
+    they could be applied.
     """
     if not isinstance(data, dict):
         raise ConfigError("<root>", "configuration must be a mapping")
 
     targets = _parse_targets(data.get("targets"))
     externals = _parse_external(data.get("external_repositories"), base_dir)
-    if not targets and not externals:
+    if require_repository_source and not targets and not externals:
         raise ConfigError(
             "targets",
             "at least one {host, org} target or one external repository is required",
@@ -322,7 +349,7 @@ def validate_config(data: dict[str, Any], base_dir: Path) -> Config:
     )
 
 
-def load_config(path: Path) -> Config:
+def load_config(path: Path, require_repository_source: bool = True) -> Config:
     """Read and validate a configuration file."""
     if not path.is_file():
         raise ConfigError("<config>", f"configuration file not found: {path}")
@@ -330,6 +357,10 @@ def load_config(path: Path) -> Config:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         raise ConfigError("<config>", f"configuration is not valid YAML: {exc}") from exc
-    config = validate_config(data or {}, base_dir=path.parent.resolve())
+    config = validate_config(
+        data or {},
+        base_dir=path.parent.resolve(),
+        require_repository_source=require_repository_source,
+    )
     config.source_path = path.resolve()
     return config

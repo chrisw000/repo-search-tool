@@ -28,6 +28,8 @@
 - [x] 3.8 External pre-cloned mode, non-destructive: clean → scan as-is at current commit and record the SHA; dirty → skip with recorded warning (D6)
 - [x] 3.9 Per-repo failure isolation — one failed repository records its reason and the run continues
 - [x] 3.10 Run checkpointing for resumability; on resume, skip already-completed repositories
+- [x] 3.11 Named repository selection within a target: acquire only the named subset without enumerating the org; a named repo is acquired even when archived or a fork; a missing one is an acquisition failure, never a silent reduction of the target set
+- [x] 3.12 Fix `--external-root`: configuration is validated before the flag is applied, so the standalone form cannot be used
 
 ## 4. Text-pattern search
 

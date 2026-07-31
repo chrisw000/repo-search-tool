@@ -50,16 +50,27 @@ _SEVERITY_WEIGHTS = {
 
 @dataclass(frozen=True)
 class Target:
-    """One `{host, organisation}` pair to enumerate."""
+    """One `{host, organisation}` pair to enumerate.
+
+    `repos` narrows the target to a named subset. It exists for trial runs: a
+    validation set has to be *chosen* — a legacy repository on a non-`main`
+    branch, one with checked-in build output — and taking the first N of an
+    alphabetical enumeration would not include them.
+    """
 
     host: str
     org: str
     include_archived: bool = False
     include_forks: bool = False
+    repos: tuple[str, ...] = ()
 
     @property
     def label(self) -> str:
         return f"{self.host}/{self.org}"
+
+    @property
+    def is_narrowed(self) -> bool:
+        return bool(self.repos)
 
 
 @dataclass(frozen=True)

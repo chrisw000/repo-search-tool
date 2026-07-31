@@ -246,6 +246,13 @@ def acquire_external(target: RepoTarget) -> AcquisitionResult:
 
 def acquire(target: RepoTarget, managed_destination: Path) -> AcquisitionResult:
     """Acquire one repository by whichever posture its source implies."""
+    if target.acquisition_error:
+        # Resolution already failed upstream; nothing to attempt.
+        return AcquisitionResult(
+            target=target,
+            outcome=AcquisitionOutcome.FAILED,
+            reason=target.acquisition_error,
+        )
     if target.is_external:
         return acquire_external(target)
     return acquire_managed(target, managed_destination)
