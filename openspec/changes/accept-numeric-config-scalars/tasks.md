@@ -16,17 +16,17 @@ implementation.
 
 ## 2. Loader implementation
 
-- [ ] 2.1 Add `RawInt`/`RawFloat` subclasses and a `SafeLoader` subclass wrapping only the `int` and `float` constructors to attach `node.value` as `raw` (design D2, D3 — do **not** wrap `bool`)
-- [ ] 2.2 Add a `scalar_text` helper returning `raw` when present and falling back to `str(value)` otherwise (design D4), with `None` and `bool` excluded so they stay rejections
-- [ ] 2.3 Change `_string_list` to admit numeric scalars through `scalar_text`, leaving the existing field-named `ConfigError` for everything else
-- [ ] 2.4 Point `load_config` at the new loader in place of `yaml.safe_load`
-- [ ] 2.5 Cast `scope.max_file_bytes` with `int()` before storing it on `ScanScope`, so no raw-carrying value escapes into the rest of the system (design D6); confirm `similarity_threshold` already does this
-- [ ] 2.6 Route `_load_sidecar_labels` in `references.py` through the same loader and `scalar_text` in place of `str(v)` (design D7)
-- [ ] 2.7 Run the suite; every test from group 1 passes and the existing 203 continue to pass
+- [x] 2.1 Add `RawInt`/`RawFloat` subclasses and a `SafeLoader` subclass wrapping only the `int` and `float` constructors to attach `node.value` as `raw` (design D2, D3 — do **not** wrap `bool`)
+- [x] 2.2 Add a `scalar_text` helper returning `raw` when present and falling back to `str(value)` otherwise (design D4), with `None` and `bool` excluded so they stay rejections
+- [x] 2.3 Change `_string_list` to admit numeric scalars through `scalar_text`, leaving the existing field-named `ConfigError` for everything else
+- [x] 2.4 Point `load_config` at the new loader in place of `yaml.safe_load`
+- [x] 2.5 Cast `scope.max_file_bytes` with `int()` before storing it on `ScanScope`, so no raw-carrying value escapes into the rest of the system (design D6); confirm `similarity_threshold` already does this
+- [x] 2.6 Route `_load_sidecar_labels` in `references.py` through the same loader and `scalar_text` in place of `str(v)` (design D7)
+- [x] 2.7 Run the suite; every test from group 1 passes and the existing 203 continue to pass
 
 ## 3. Verification and documentation
 
-- [ ] 3.1 Confirm by inspection that no `isinstance` check in `loader.py` was altered to accommodate this change — group 2 should have touched none of them (design D3)
+- [x] 3.1 Confirm by diff that every boolean and integer `isinstance` guard in `loader.py` is untouched (design D3). The `isinstance(..., str)` checks are expected to change — that is the change itself — but the type guards protecting `similarity_threshold`, `max_file_bytes`, `include_archived`, `include_forks`, and `case_sensitive` must not
 - [ ] 3.2 Run an end-to-end scan against a synthetic fixture repository containing the literal text `07654321`, confirming the finding is reported — the requirement is about what a scan finds, not only what validation accepts
 - [ ] 3.3 Update the example configuration and any config documentation to show a company number entered unquoted
 - [ ] 3.4 Run `openspec validate accept-numeric-config-scalars --strict`

@@ -13,6 +13,7 @@ from pathlib import Path
 import yaml
 
 from brandscan.config.model import ReferenceImage
+from brandscan.config.scalars import load_yaml, scalar_text
 
 REFERENCE_SUFFIXES = {
     ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".ico", ".svg",
@@ -36,7 +37,7 @@ def _load_sidecar_labels(directory: Path) -> dict[str, str]:
         if not sidecar.is_file():
             continue
         try:
-            data = yaml.safe_load(sidecar.read_text(encoding="utf-8")) or {}
+            data = load_yaml(sidecar.read_text(encoding="utf-8")) or {}
         except yaml.YAMLError as exc:
             raise ReferenceError(
                 f"reference_images.dir ({candidate})", f"{candidate} is not valid YAML: {exc}"
@@ -46,7 +47,16 @@ def _load_sidecar_labels(directory: Path) -> dict[str, str]:
                 f"reference_images.dir ({candidate})",
                 f"{candidate} must map each reference image filename to a label",
             )
-        return {str(k): str(v) for k, v in data.items()}
+        labels: dict[str, str] = {}
+        for key, value in data.items():
+            filename, label = scalar_text(key), scalar_text(value)
+            if filename is None or label is None or not label.strip():
+                raise ReferenceError(
+                    f"reference_images.dir ({candidate})",
+                    f"{candidate} must map each reference image filename to a label",
+                )
+            labels[filename] = label
+        return labels
     return {}
 
 
