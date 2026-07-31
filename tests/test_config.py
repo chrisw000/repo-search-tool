@@ -302,6 +302,252 @@ def test_scope_defaults_are_overridable(tmp_path: Path):
     assert config.scope.exclude_dirs == ["dist"]
 
 
+# --- Numeric scalars in string-valued positions ---------------------------
+#
+# A company number is a bare numeral, so YAML resolves it to an integer. These
+# exercise the loader through a real file, because the defect being guarded
+# against lives in the parse: PyYAML reads a leading-zero numeral made only of
+# octal digits as octal, so the source text is the only trustworthy value.
+
+
+def config_from_yaml(text: str, tmp_path: Path):
+    path = tmp_path / "config.yaml"
+    path.write_text(text, encoding="utf-8")
+    return load_config(path)
+
+
+YAML_BASE = """
+targets:
+  - host: github.com
+    org: contoso
+brand:
+  names: [Contoso]
+"""
+
+
+def test_a_company_number_is_accepted_as_a_bare_numeral(tmp_path: Path):
+    config = config_from_yaml(
+        YAML_BASE + "  legal:\n    - 3909886\n    - 03909886\n", tmp_path
+    )
+    patterns = config.group("legal-strings").patterns
+    assert "3909886" in patterns
+    assert "03909886" in patterns
+
+
+def test_an_octal_looking_company_number_keeps_its_digits(tmp_path: Path):
+    """The case the whole change exists for.
+
+    `07654321` is all octal digits behind a leading zero, so YAML 1.1 reads it
+    as octal 2054353. Searching for that instead would report every repository
+    carrying the real company number as clean.
+    """
+    config = config_from_yaml(YAML_BASE + "  legal:\n    - 07654321\n", tmp_path)
+    patterns = config.group("legal-strings").patterns
+    assert "07654321" in patterns
+    assert "2054353" not in patterns
+
+
+def test_a_numeral_is_admitted_in_a_brand_name(tmp_path: Path):
+    config = config_from_yaml("""
+targets:
+  - host: github.com
+    org: contoso
+brand:
+  names:
+    - 0700
+""", tmp_path)
+    assert "0700" in config.group("brand-names").patterns
+
+
+def test_a_numeral_is_admitted_in_a_user_defined_group(tmp_path: Path):
+    config = config_from_yaml(
+        YAML_BASE
+        + """
+search_groups:
+  - name: internal-codes
+    patterns:
+      - 07654321
+""",
+        tmp_path,
+    )
+    assert config.group("internal-codes").patterns == ["07654321"]
+
+
+def test_a_numeral_is_admitted_in_a_scope_glob(tmp_path: Path):
+    config = config_from_yaml(
+        YAML_BASE + "scope:\n  exclude_dirs:\n    - 2024\n", tmp_path
+    )
+    assert config.scope.exclude_dirs == ["2024"]
+
+
+def test_a_numeral_is_admitted_in_a_repository_name(tmp_path: Path):
+    config = config_from_yaml("""
+targets:
+  - host: github.com
+    org: contoso
+    repos:
+      - 0700
+brand:
+  names: [Contoso]
+""", tmp_path)
+    assert config.targets[0].repos == ("0700",)
+
+
+def test_a_numeral_in_disable_search_groups_reports_the_numeral(tmp_path: Path):
+    """Coerced first, then rejected on its own merits — not as a type error."""
+    with pytest.raises(ConfigError) as excinfo:
+        config_from_yaml(YAML_BASE + "disable_search_groups:\n  - 12345\n", tmp_path)
+    assert excinfo.value.field == "disable_search_groups"
+    assert "12345" in excinfo.value.message
+
+
+def test_a_quoted_numeral_is_unchanged(tmp_path: Path):
+    quoted = config_from_yaml(YAML_BASE + '  legal:\n    - "07654321"\n', tmp_path)
+    bare = config_from_yaml(YAML_BASE + "  legal:\n    - 07654321\n", tmp_path)
+    assert quoted.group("legal-strings").patterns == bare.group("legal-strings").patterns
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "    - {a: b}",      # a mapping
+        "    - [nested]",    # a nested list
+        "    -",             # an empty entry
+        "    - No",          # YAML's boolean words stay out (design D3)
+    ],
+    ids=["mapping", "nested-list", "empty", "boolean-word"],
+)
+def test_a_non_numeric_value_is_still_rejected_by_field(entry: str, tmp_path: Path):
+    with pytest.raises(ConfigError) as excinfo:
+        config_from_yaml(YAML_BASE + "  legal:\n" + entry + "\n", tmp_path)
+    assert excinfo.value.field == "brand.legal[0]"
+
+
+def test_an_empty_entry_never_becomes_a_match_everything_pattern(tmp_path: Path):
+    """An empty pattern would match every file in the estate."""
+    with pytest.raises(ConfigError):
+        config_from_yaml(YAML_BASE + "  legal:\n    -\n", tmp_path)
+
+
+# --- Typed fields stay typed ----------------------------------------------
+
+
+def test_integer_fields_accept_integers(tmp_path: Path):
+    config = config_from_yaml(
+        YAML_BASE + "similarity_threshold: 5\nscope:\n  max_file_bytes: 1024\n", tmp_path
+    )
+    assert config.similarity_threshold == 5
+    assert config.scope.max_file_bytes == 1024
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "similarity_threshold: true",
+        'similarity_threshold: "5"',
+        "similarity_threshold: -1",
+    ],
+    ids=["boolean", "string", "negative"],
+)
+def test_a_bad_similarity_threshold_is_still_rejected(line: str, tmp_path: Path):
+    """`true` is the specific regression risk: a raw-carrying int subclass
+    cannot be a `bool`, so a careless implementation would accept it as 1."""
+    with pytest.raises(ConfigError) as excinfo:
+        config_from_yaml(YAML_BASE + line + "\n", tmp_path)
+    assert excinfo.value.field == "similarity_threshold"
+
+
+@pytest.mark.parametrize(
+    "value", ["true", '"1024"', "0"], ids=["boolean", "string", "zero"]
+)
+def test_a_bad_max_file_bytes_is_still_rejected(value: str, tmp_path: Path):
+    with pytest.raises(ConfigError) as excinfo:
+        config_from_yaml(YAML_BASE + f"scope:\n  max_file_bytes: {value}\n", tmp_path)
+    assert excinfo.value.field == "scope.max_file_bytes"
+
+
+def test_boolean_fields_accept_booleans(tmp_path: Path):
+    config = config_from_yaml("""
+targets:
+  - host: github.com
+    org: contoso
+    include_archived: true
+    include_forks: false
+brand:
+  names: [Contoso]
+search_groups:
+  - name: brand-names
+    case_sensitive: true
+""", tmp_path)
+    assert config.targets[0].include_archived is True
+    assert config.targets[0].include_forks is False
+    assert config.group("brand-names").case_sensitive is True
+
+
+def test_a_non_boolean_in_a_boolean_field_is_still_rejected(tmp_path: Path):
+    with pytest.raises(ConfigError) as excinfo:
+        config_from_yaml("""
+targets:
+  - host: github.com
+    org: contoso
+    include_archived: 1
+brand:
+  names: [Contoso]
+""", tmp_path)
+    assert excinfo.value.field == "targets[0].include_archived"
+
+
+def test_a_non_boolean_case_sensitive_is_still_rejected(tmp_path: Path):
+    with pytest.raises(ConfigError) as excinfo:
+        config_from_yaml(
+            YAML_BASE + "search_groups:\n  - name: brand-names\n    case_sensitive: 1\n",
+            tmp_path,
+        )
+    assert excinfo.value.field == "search_groups[0].case_sensitive"
+
+
+def test_a_coerced_colour_still_faces_the_colour_format_rule(tmp_path: Path):
+    with pytest.raises(ConfigError) as excinfo:
+        config_from_yaml("""
+targets:
+  - host: github.com
+    org: contoso
+brand:
+  names: [Contoso]
+  colors:
+    - 12345678
+""", tmp_path)
+    assert excinfo.value.field == "brand.colors[0]"
+
+
+# --- Reference labels -----------------------------------------------------
+
+
+def test_a_numeric_sidecar_label_keeps_its_source_text(tmp_path: Path, reference_dir: Path):
+    (reference_dir / "labels.yaml").write_text(
+        "logo-horizontal.png: 07654321\nlogo-stacked.png: 3909886\n", encoding="utf-8"
+    )
+    config = config_from({"reference_images": {"dir": str(reference_dir)}}, tmp_path)
+    assert config.reference_labels == ["07654321", "3909886"]
+
+
+def test_a_numeric_configured_label_keeps_its_source_text(
+    tmp_path: Path, reference_dir: Path
+):
+    config = config_from_yaml(
+        YAML_BASE
+        + f"""
+reference_images:
+  dir: {reference_dir.as_posix()}
+  labels:
+    logo-horizontal.png: 07654321
+    logo-stacked.png: 07654321
+""",
+        tmp_path,
+    )
+    assert config.reference_labels == ["07654321"]
+
+
 def test_the_shipped_example_configuration_is_valid():
     example = Path(__file__).resolve().parents[1] / "config.example.yaml"
     data = yaml.safe_load(example.read_text(encoding="utf-8"))
