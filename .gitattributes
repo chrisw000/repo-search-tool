@@ -1,0 +1,34 @@
+# Normalise every text file to LF, both in the repository and in working
+# copies. Without this, `core.autocrlf=true` on Windows checks files out as
+# CRLF, and a later clone on macOS or Linux rewrites every line of every file
+# the first time it is touched — which buries real changes in whole-file diffs.
+* text=auto eol=lf
+
+# Batch files are parsed by cmd.exe, which needs CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary: never convert line endings, never attempt a text diff. Reference
+# logos and any image fixtures land here.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.bmp binary
+*.webp binary
+*.tif binary
+*.tiff binary
+*.ico binary
+*.cur binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.zip binary
+*.gz binary
+*.7z binary
+
+# SVG is text, and diffing it is genuinely useful.
+*.svg text eol=lf
