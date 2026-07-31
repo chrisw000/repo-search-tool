@@ -25,6 +25,7 @@ from brandscan.config.model import (
     is_hex_colour,
 )
 from brandscan.config.references import ReferenceError, load_reference_images
+from brandscan.config.scalars import load_yaml, scalar_text
 
 BRAND_VOCABULARY_KEYS = ("names", "fonts", "domains", "colors", "legal")
 
@@ -55,11 +56,27 @@ def _require_list(value: Any, field: str) -> list[Any]:
 
 
 def _string_list(value: Any, field: str) -> list[str]:
+    """Every string list in the configuration passes through here.
+
+    A numeric scalar is admitted as the text it was written as, so a company
+    number needs no quoting. See `config/scalars.py` for why the parsed value
+    cannot be trusted.
+    """
     items = _require_list(value, field)
+    result: list[str] = []
     for index, item in enumerate(items):
-        if not isinstance(item, str):
+        text = scalar_text(item)
+        if text is None:
             raise ConfigError(f"{field}[{index}]", "must be a string")
-    return [item for item in items]
+        result.append(text)
+    return result
+
+
+def _required_string(value: Any, field: str) -> str:
+    text = scalar_text(value)
+    if text is None or not text.strip():
+        raise ConfigError(field, "is required and must be a non-empty string")
+    return text.strip()
 
 
 def _parse_severity(value: Any, field: str) -> Severity:
@@ -80,12 +97,8 @@ def _parse_targets(raw: Any) -> list[Target]:
     for index, entry in enumerate(entries):
         field = f"targets[{index}]"
         entry = _require_mapping(entry, field)
-        host = entry.get("host")
-        org = entry.get("org")
-        if not isinstance(host, str) or not host.strip():
-            raise ConfigError(f"{field}.host", "is required and must be a non-empty string")
-        if not isinstance(org, str) or not org.strip():
-            raise ConfigError(f"{field}.org", "is required and must be a non-empty string")
+        host = _required_string(entry.get("host"), f"{field}.host")
+        org = _required_string(entry.get("org"), f"{field}.org")
         for flag in ("include_archived", "include_forks"):
             if flag in entry and not isinstance(entry[flag], bool):
                 raise ConfigError(f"{field}.{flag}", "must be true or false")
@@ -110,8 +123,8 @@ def _parse_targets(raw: Any) -> list[Target]:
 
         targets.append(
             Target(
-                host=host.strip(),
-                org=org.strip(),
+                host=host,
+                org=org,
                 include_archived=bool(entry.get("include_archived", False)),
                 include_forks=bool(entry.get("include_forks", False)),
                 repos=tuple(cleaned),
@@ -126,20 +139,18 @@ def _parse_external(raw: Any, base_dir: Path) -> list[ExternalRepo]:
     for index, entry in enumerate(entries):
         field = f"external_repositories[{index}]"
         entry = _require_mapping(entry, field)
-        for key in ("host", "org", "name", "path"):
-            value = entry.get(key)
-            if not isinstance(value, str) or not value.strip():
-                raise ConfigError(
-                    f"{field}.{key}", "is required and must be a non-empty string"
-                )
-        path = Path(str(entry["path"])).expanduser()
+        values = {
+            key: _required_string(entry.get(key), f"{field}.{key}")
+            for key in ("host", "org", "name", "path")
+        }
+        path = Path(values["path"]).expanduser()
         if not path.is_absolute():
             path = (base_dir / path).resolve()
         externals.append(
             ExternalRepo(
-                host=str(entry["host"]).strip(),
-                org=str(entry["org"]).strip(),
-                name=str(entry["name"]).strip(),
+                host=values["host"],
+                org=values["org"],
+                name=values["name"],
                 path=path,
             )
         )
@@ -153,10 +164,7 @@ def _parse_group_overrides(raw: Any) -> dict[str, dict[str, Any]]:
     for index, entry in enumerate(entries):
         field = f"search_groups[{index}]"
         entry = _require_mapping(entry, field)
-        name = entry.get("name")
-        if not isinstance(name, str) or not name.strip():
-            raise ConfigError(f"{field}.name", "is required and must be a non-empty string")
-        name = name.strip()
+        name = _required_string(entry.get("name"), f"{field}.name")
         if name in overrides:
             raise ConfigError(f"{field}.name", f"duplicate search-group name {name!r}")
         overrides[name] = {"_field": field, **entry}
@@ -207,10 +215,12 @@ def _apply_group_overrides(
             group.exclude = _string_list(raw["exclude"], f"{field}.exclude")
         if "severity" in raw:
             group.severity = _parse_severity(raw["severity"], f"{field}.severity")
-        if "description" in raw:
-            group.description = str(raw["description"])
-        if "remediation" in raw:
-            group.remediation = str(raw["remediation"])
+        for prose in ("description", "remediation"):
+            if prose in raw:
+                text = scalar_text(raw[prose])
+                if text is None:
+                    raise ConfigError(f"{field}.{prose}", "must be a string")
+                setattr(group, prose, text)
         if "case_sensitive" in raw:
             if not isinstance(raw["case_sensitive"], bool):
                 raise ConfigError(f"{field}.case_sensitive", "must be true or false")
@@ -257,7 +267,8 @@ def _parse_scope(raw: Any) -> ScanScope:
         value = entry["max_file_bytes"]
         if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise ConfigError("scope.max_file_bytes", "must be a positive integer")
-        scope.max_file_bytes = value
+        # Cast so no source-text-carrying subclass escapes the config boundary.
+        scope.max_file_bytes = int(value)
     return scope
 
 
@@ -308,11 +319,16 @@ def validate_config(
     reference_dir: Path | None = None
     references = []
     if references_raw.get("dir"):
-        reference_dir = Path(str(references_raw["dir"])).expanduser()
+        reference_dir = Path(
+            _required_string(references_raw["dir"], "reference_images.dir")
+        ).expanduser()
         if not reference_dir.is_absolute():
             reference_dir = (base_dir / reference_dir).resolve()
         labels_raw = _require_mapping(references_raw.get("labels"), "reference_images.labels")
-        labels = {str(k): str(v) for k, v in labels_raw.items()}
+        labels = {}
+        for key, value in labels_raw.items():
+            name = _required_string(key, "reference_images.labels")
+            labels[name] = _required_string(value, f"reference_images.labels.{name}")
         try:
             references = load_reference_images(reference_dir, labels)
         except ReferenceError as exc:
@@ -332,7 +348,9 @@ def validate_config(
     elif not isinstance(threshold, int) or isinstance(threshold, bool) or threshold < 0:
         raise ConfigError("similarity_threshold", "must be a non-negative integer")
 
-    output_dir = Path(str(data.get("output_dir", "brandscan-output"))).expanduser()
+    output_dir = Path(
+        _required_string(data.get("output_dir") or "brandscan-output", "output_dir")
+    ).expanduser()
     if not output_dir.is_absolute():
         output_dir = (base_dir / output_dir).resolve()
 
@@ -354,7 +372,7 @@ def load_config(path: Path, require_repository_source: bool = True) -> Config:
     if not path.is_file():
         raise ConfigError("<config>", f"configuration file not found: {path}")
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        data = load_yaml(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         raise ConfigError("<config>", f"configuration is not valid YAML: {exc}") from exc
     config = validate_config(
