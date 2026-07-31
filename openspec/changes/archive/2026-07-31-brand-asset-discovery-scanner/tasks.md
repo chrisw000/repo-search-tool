@@ -73,9 +73,17 @@
 
 ## 8. Validation
 
-- [ ] 8.1 Assemble a validation set of 5–6 representative repositories, deliberately including one legacy repo with a non-`main` default branch and one with checked-in build output
+- [x] 8.1 Assemble a validation set of 5–6 representative repositories, deliberately including one legacy repo with a non-`main` default branch and one with checked-in build output
 - [x] 8.2 Verify content-based matching survives rename, reformat, resize, recolour, and padding
-- [ ] 8.3 Tune the similarity threshold empirically against the validation set and record the settled default
-- [ ] 8.4 Confirm the per-repo Markdown ingests cleanly as fix instructions for an AI coding agent before scaling to ~400
+- [x] 8.3 Tune the similarity threshold empirically against the validation set and record the settled default
+- [x] 8.4 Confirm the per-repo Markdown ingests cleanly as fix instructions for an AI coding agent before scaling to ~400
 - [x] 8.5 Exercise resumability and per-repo failure isolation with a deliberately interrupted run
 - [x] 8.6 Verify the non-destructive external-clone path leaves a dirty working copy untouched
+
+## Notes
+
+- **Settled similarity threshold (8.3).** Tuning against the validation set
+  confirmed 10, the documented default — it is now an empirical result rather
+  than an assumption. `DEFAULT_SIMILARITY_THRESHOLD` in `config/model.py` is
+  unchanged, and provenance continues to record the value as `default` when it
+  is not overridden.
